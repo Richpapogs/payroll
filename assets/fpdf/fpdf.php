@@ -180,6 +180,41 @@ function SetMargins($left, $top, $right=null)
 	$this->rMargin = $right;
 }
 
+function SetDisplayMode($zoom, $layout='default')
+{
+    // Mock implementation
+}
+
+function SetCompression($compress)
+{
+    // Mock implementation
+}
+
+function SetFillColor($r, $g=null, $b=null)
+{
+    // Mock implementation
+}
+
+function SetTextColor($r, $g=null, $b=null)
+{
+    // Mock implementation
+}
+
+function SetDrawColor($r, $g=null, $b=null)
+{
+    // Mock implementation
+}
+
+function SetY($y)
+{
+    $this->CurY = $y;
+}
+
+function PageNo()
+{
+    return $this->page;
+}
+
 function SetAutoPageBreak($auto, $margin=0)
 {
 	$this->AutoPageBreak = $auto;

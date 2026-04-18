@@ -1,5 +1,6 @@
 <?php
 require_once 'config.php';
+require_once 'payroll_helper.php';
 authorize(['admin', 'hr']);
 
 $message = '';
@@ -47,17 +48,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['calculate_payroll']))
         // Gross Pay
         $gross_pay = ($employee['salary'] + $overtime + $bonus) - $attendance_deduction;
 
-        // Philippine-based deductions (using basic salary for standard deductions)
-        $sss = $employee['salary'] * 0.045;
-        $philhealth = $employee['salary'] * 0.02;
-        
-        $pagibig = ($employee['salary'] <= 1500) ? ($employee['salary'] * 0.01) : ($employee['salary'] * 0.02);
-        if ($pagibig > 100) $pagibig = 100;
+        // Philippine-based deductions (2026 Rules)
+        $sss = calculateSSS($employee['salary']);
+        $philhealth = calculatePhilHealth($employee['salary']);
+        $pagibig = calculatePagIBIG($employee['salary']);
 
-        $withholding_tax = $gross_pay * 0.10;
+        // Taxable Income = Gross Pay - (SSS + PhilHealth + PagIBIG)
+        $taxable_income = $gross_pay - ($sss + $philhealth + $pagibig);
+        $withholding_tax = calculateTax($taxable_income);
 
-        $total_deductions = $sss + $philhealth + $pagibig + $withholding_tax;
-        $net_pay = $gross_pay - $total_deductions;
+        $total_deductions = round($sss + $philhealth + $pagibig + $withholding_tax, 2);
+        $net_pay = round($gross_pay - $total_deductions, 2);
 
         // Save Payroll
         $stmt_save = $pdo->prepare("INSERT INTO payroll (employee_id, cutoff_start, cutoff_end, gross_pay, sss, philhealth, pagibig, withholding_tax, total_deductions, net_pay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
@@ -253,10 +254,24 @@ include 'sidebar.php';
                         </div>
                     </div>
                     <div class="mt-3 p-3 bg-light rounded-3 border">
-                        <div class="small text-muted"><i class="fas fa-info-circle me-1"></i> Automatic Deductions:</div>
-                        <div class="d-flex justify-content-between mt-1 small">
-                            <span>SSS, PhilHealth, Pag-IBIG</span>
-                            <span class="fw-medium">Calculated Automatically</span>
+                        <div class="small text-muted"><i class="fas fa-info-circle me-1"></i> 2026 Mandatory Deductions:</div>
+                        <div class="mt-1 small">
+                            <div class="d-flex justify-content-between">
+                                <span>SSS (MSC based)</span>
+                                <span class="fw-medium">4.5% Employee Share</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>PhilHealth</span>
+                                <span class="fw-medium">2.5% Employee Share</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>Pag-IBIG</span>
+                                <span class="fw-medium">Max ₱100.00</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span>BIR Tax</span>
+                                <span class="fw-medium">TRAIN Law Brackets</span>
+                            </div>
                         </div>
                     </div>
                 </div>
