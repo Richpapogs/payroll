@@ -33,8 +33,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_attendance'])) {
                     $diff = ($end - $start) / 3600;
                     $total_hours = round($diff, 2);
 
-                    // Standard shift: 08:00 to 17:00 (1 hour break)
-                    $standard_start = strtotime("08:00:00");
+                    // Standard shift: 09:00 to 17:00 (8 hours)
+                    $standard_start = strtotime("09:00:00");
                     $standard_end = strtotime("17:00:00");
                     
                     if ($start > $standard_start) {
@@ -143,7 +143,7 @@ include 'sidebar.php';
                                 </select>
                             </td>
                             <td>
-                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_in]" class="form-control form-control-sm" value="<?php echo $emp['time_in'] ?: '08:00'; ?>">
+                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_in]" class="form-control form-control-sm" value="<?php echo $emp['time_in'] ?: '09:00'; ?>">
                             </td>
                             <td>
                                 <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_out]" class="form-control form-control-sm" value="<?php echo $emp['time_out'] ?: '17:00'; ?>">
