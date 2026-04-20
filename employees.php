@@ -5,89 +5,130 @@ authorize(['admin', 'hr']);
 $message = '';
 $error = '';
 
+/**
+ * Auto-generate next Employee ID: EMP-2026-XXX
+ */
+function generateNextEmployeeID($pdo) {
+    $year = date('Y');
+    $stmt = $pdo->prepare("SELECT employee_id FROM employees WHERE employee_id LIKE ? ORDER BY employee_id DESC LIMIT 1");
+    $stmt->execute(["EMP-$year-%"]);
+    $last_id = $stmt->fetchColumn();
+
+    if ($last_id) {
+        $last_num = (int)substr($last_id, -3);
+        $next_num = str_pad($last_num + 1, 3, '0', STR_PAD_LEFT);
+    } else {
+        $next_num = '001';
+    }
+    return "EMP-$year-$next_num";
+}
+
 // Handle Add/Edit Employee
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['action'])) {
-        // CSRF Protection could be added here
-        
-        // Input Validation
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'add') {
         $name = trim($_POST['name']);
-        $employee_id = strtoupper(trim($_POST['employee_id']));
-        $username = trim($_POST['username'] ?? '');
         $position = trim($_POST['position']);
         $salary = (float)$_POST['salary'];
         $email = trim($_POST['email'] ?? '');
 
-        if (empty($name) || empty($employee_id) || empty($position) || $salary <= 0) {
-            $error = "Name, Employee ID, Position are required and salary must be positive.";
-        } elseif (!preg_match('/^EMP-\d{4}-\d{3}$/', $employee_id)) {
-            $error = "Invalid Employee ID format. Must be EMP-0000-000 (e.g., EMP-2023-001).";
+        if (empty($name) || empty($position) || $salary <= 0) {
+            $error = "All fields are required for new employees.";
         } else {
-            if ($_POST['action'] === 'add') {
-                if (empty($username)) {
-                    $error = "Username is required for new employees.";
-                } else {
-                    try {
-                        $pdo->beginTransaction();
-                        
-                        $stmt = $pdo->prepare("INSERT INTO employees (employee_id, name, position, salary, email) VALUES (?, ?, ?, ?, ?)");
-                        $stmt->execute([$employee_id, $name, $position, $salary, $email]);
-                        $new_emp_id = $pdo->lastInsertId();
-                        
-                        // Generate temporary password: [Username][EmployeeID]
-                        $temp_password = $username . $employee_id;
-                        $hashed_password = password_hash($temp_password, PASSWORD_DEFAULT);
-                        
-                        // Create employee user account (First Login = True)
-                        $stmt_user = $pdo->prepare("INSERT INTO users (username, password, role, employee_id, first_login) VALUES (?, ?, 'employee', ?, TRUE)");
-                        $stmt_user->execute([$username, $hashed_password, $new_emp_id]);
+            try {
+                $pdo->beginTransaction();
+                $employee_id = generateNextEmployeeID($pdo);
+                $stmt = $pdo->prepare("INSERT INTO employees (employee_id, name, position, salary, email) VALUES (?, ?, ?, ?, ?)");
+                $stmt->execute([$employee_id, $name, $position, $salary, $email]);
+                $new_emp_id = $pdo->lastInsertId();
+                
+                $username = strtolower(str_replace(' ', '', $name));
+                $temp_password = $username . $employee_id;
+                $hashed_password = password_hash($temp_password, PASSWORD_DEFAULT);
+                
+                $stmt_user = $pdo->prepare("INSERT INTO users (username, password, role, employee_id, first_login) VALUES (?, ?, 'employee', ?, TRUE)");
+                $stmt_user->execute([$username, $hashed_password, $new_emp_id]);
 
-                        logActivity($pdo, $_SESSION['user_id'], 'Add Employee', "Added employee: $name ($employee_id) with username: $username");
-                        $pdo->commit();
-                        $message = "Employee added successfully! Login: $username / $temp_password";
-                    } catch (PDOException $e) {
-                        $pdo->rollBack();
-                        if ($e->getCode() == 23000) {
-                            $error = "Error: Employee ID or Username already exists. Please use a unique identifier.";
-                        } else {
-                            $error = "Error adding employee: " . $e->getMessage();
-                        }
-                    }
-                }
-            } elseif ($_POST['action'] === 'edit') {
-                $id = (int)$_POST['id'];
-                try {
-                    $stmt = $pdo->prepare("UPDATE employees SET employee_id = ?, name = ?, position = ?, salary = ?, email = ? WHERE id = ?");
-                    $stmt->execute([$employee_id, $name, $position, $salary, $email, $id]);
-                    
-                    logActivity($pdo, $_SESSION['user_id'], 'Edit Employee', "Updated employee ID: $id");
-                    $message = "Employee updated successfully!";
-                } catch (PDOException $e) {
-                    if ($e->getCode() == 23000) {
-                        $error = "Error: Employee ID already exists in another record.";
-                    } else {
-                        $error = "Error updating employee: " . $e->getMessage();
-                    }
-                }
+                // Add System Notification
+                $stmt_notif = $pdo->prepare("INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)");
+                $stmt_notif->execute([$_SESSION['user_id'], 'New Employee Added', "Employee $name ($employee_id) has been successfully added to the system."]);
+
+                $pdo->commit();
+                header("Location: employees.php?msg=" . urlencode("Employee added successfully! Username: $username"));
+                exit;
+            } catch (PDOException $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $error = "Error adding employee: " . $e->getMessage();
             }
+        }
+    } elseif ($action === 'edit') {
+        // Enhanced debugging: Capture the raw POST value
+        $raw_id = $_POST['update_target_id'] ?? 'MISSING';
+        $id = (int)$raw_id;
+        $eid = isset($_POST['edit_employee_id']) ? strtoupper(trim($_POST['edit_employee_id'])) : '';
+        $name = isset($_POST['edit_name']) ? trim($_POST['edit_name']) : '';
+        $pos = isset($_POST['edit_position']) ? trim($_POST['edit_position']) : '';
+        $sal = isset($_POST['edit_salary']) ? (float)$_POST['edit_salary'] : 0;
+        $email = (isset($_POST['edit_email']) && trim($_POST['edit_email']) !== '') ? trim($_POST['edit_email']) : null;
+
+        if ($id > 0 && !empty($name)) {
+            try {
+                $pdo->beginTransaction();
+
+                // 1. Update Employee
+                $stmt = $pdo->prepare("UPDATE employees SET employee_id = ?, name = ?, position = ?, salary = ?, email = ? WHERE id = ?");
+                $stmt->execute([$eid, $name, $pos, $sal, $email, $id]);
+                
+                // 2. Sync User account username
+                $new_username = strtolower(str_replace(' ', '', $name));
+                $stmt_user = $pdo->prepare("UPDATE users SET username = ? WHERE employee_id = ?");
+                $stmt_user->execute([$new_username, $id]);
+                
+                // Add System Notification for Update
+                $stmt_notif = $pdo->prepare("INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)");
+                $stmt_notif->execute([$_SESSION['user_id'], 'Record Updated', "The record for $name ($eid) was successfully updated."]);
+
+                $pdo->commit();
+                header("Location: employees.php?msg=" . urlencode("Employee record updated successfully!"));
+                exit;
+            } catch (Exception $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                $error = "Update Failed: " . $e->getMessage();
+            }
+        } else {
+            // Enhanced debug info
+            $post_keys = implode(', ', array_keys($_POST));
+            $error = "System Error: The record ID was lost during submission (ID: $id, Name: $name). Please refresh and try again.";
         }
     }
 }
+
+if (isset($_GET['msg'])) $message = $_GET['msg'];
 
 // Handle Delete
 if (isset($_GET['delete'])) {
     $id = (int)$_GET['delete'];
     try {
-        $stmt = $pdo->prepare("DELETE FROM employees WHERE id = ?");
-        $stmt->execute([$id]);
-        logActivity($pdo, $_SESSION['user_id'], 'Delete Employee', "Deleted employee ID: $id");
-        $message = "Employee deleted successfully!";
+        // Fetch employee details before deleting for notification
+        $stmt_emp = $pdo->prepare("SELECT name, employee_id FROM employees WHERE id = ?");
+        $stmt_emp->execute([$id]);
+        $emp_del = $stmt_emp->fetch();
+
+        $pdo->exec("DELETE FROM employees WHERE id = $id");
+
+        if ($emp_del) {
+            $stmt_notif = $pdo->prepare("INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)");
+            $stmt_notif->execute([$_SESSION['user_id'], 'Employee Deleted', "Employee " . $emp_del['name'] . " (" . $emp_del['employee_id'] . ") has been removed from the system."]);
+        }
+
+        header("Location: employees.php?msg=" . urlencode("Employee deleted successfully."));
+        exit;
     } catch (PDOException $e) {
-        $error = "Error deleting employee: " . $e->getMessage();
+        $error = "Error deleting employee.";
     }
 }
 
-// Fetch Employees
 $search = isset($_GET['search']) ? "%" . $_GET['search'] . "%" : "%%";
 $stmt = $pdo->prepare("SELECT * FROM employees WHERE name LIKE ? OR employee_id LIKE ? ORDER BY id DESC");
 $stmt->execute([$search, $search]);
@@ -100,7 +141,7 @@ include 'sidebar.php';
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h2 class="h4 mb-1 fw-bold text-dark">Employee Management</h2>
-        <p class="text-muted small mb-0">Manage your workforce and their compensation</p>
+        <p class="text-muted small mb-0">Manage your workforce and salary structures</p>
     </div>
     <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#addEmployeeModal">
         <i class="fas fa-plus-circle me-2"></i> Add New Employee
@@ -108,111 +149,54 @@ include 'sidebar.php';
 </div>
 
 <?php if ($message): ?>
-    <div class="alert alert-success alert-dismissible fade show border-0 shadow-sm" role="alert">
-        <i class="fas fa-check-circle me-2"></i> <?php echo $message; ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
+    <div class="alert alert-success border-0 shadow-sm"><i class="fas fa-check-circle me-2"></i> <?php echo h($message); ?></div>
 <?php endif; ?>
-
 <?php if ($error): ?>
-    <div class="alert alert-danger alert-dismissible fade show border-0 shadow-sm" role="alert">
-        <i class="fas fa-exclamation-triangle me-2"></i> <?php echo h($error); ?>
-        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-    </div>
+    <div class="alert alert-danger border-0 shadow-sm"><i class="fas fa-exclamation-triangle me-2"></i> <?php echo h($error); ?></div>
 <?php endif; ?>
 
-<!-- Search and Filter -->
-<div class="card border-0 shadow-sm mb-4">
-    <div class="card-body py-3">
-        <form action="" method="GET" class="row g-2 align-items-center">
-            <div class="col-md-5">
-                <div class="input-group">
-                    <span class="input-group-text bg-light border-end-0 text-muted"><i class="fas fa-search"></i></span>
-                    <input type="text" name="search" class="form-control bg-light border-start-0 ps-0" placeholder="Search by name or Employee ID..." value="<?php echo isset($_GET['search']) ? $_GET['search'] : ''; ?>">
-                </div>
-            </div>
-            <div class="col-md-2">
-                <button type="submit" class="btn btn-dark w-100">Filter Results</button>
-            </div>
-            <?php if (isset($_GET['search']) && $_GET['search'] != ''): ?>
-            <div class="col-md-1">
-                <a href="employees.php" class="btn btn-link text-muted small">Clear</a>
-            </div>
-            <?php endif; ?>
-        </form>
-    </div>
-</div>
-
-<!-- Employee Table -->
 <div class="card border-0 shadow-sm overflow-hidden">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
-                <thead>
+                <thead class="bg-light">
                     <tr>
                         <th class="ps-4">Employee</th>
                         <th>Position</th>
-                        <th>Basic Salary</th>
-                        <th>Date Joined</th>
+                        <th>Monthly Salary</th>
+                        <th>Daily Rate</th>
                         <th class="text-end pe-4">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php if (count($employees) > 0): ?>
-                        <?php foreach ($employees as $emp): ?>
-                        <tr>
-                            <td class="ps-4">
-                                <div class="d-flex align-items-center">
-                                    <div class="bg-light rounded-circle d-flex align-items-center justify-content-center me-3" style="width: 40px; height: 40px; color: #3b82f6;">
-                                        <i class="fas fa-user"></i>
-                                    </div>
-                                    <div>
-                                        <div class="fw-bold text-dark"><?php echo $emp['name']; ?></div>
-                                        <div class="text-muted small">ID: <?php echo $emp['employee_id']; ?> | <?php echo $emp['email']; ?></div>
-                                    </div>
-                                </div>
-                            </td>
-                            <td>
-                                <span class="badge bg-light text-dark border fw-medium"><?php echo $emp['position']; ?></span>
-                            </td>
-                            <td>
-                                <div class="fw-bold">₱<?php echo number_format($emp['salary'], 2); ?></div>
-                                <div class="text-muted small">Monthly Base</div>
-                            </td>
-                            <td class="text-muted small">
-                                <?php echo date('M d, Y', strtotime($emp['created_at'])); ?>
-                            </td>
-                            <td class="text-end pe-4">
-                                <div class="btn-group">
-                                    <button class="btn btn-sm btn-outline-primary edit-btn" 
-                                            data-id="<?php echo $emp['id']; ?>"
-                                            data-eid="<?php echo $emp['employee_id']; ?>"
-                                            data-name="<?php echo $emp['name']; ?>"
-                                            data-email="<?php echo $emp['email']; ?>"
-                                            data-pos="<?php echo $emp['position']; ?>"
-                                            data-salary="<?php echo $emp['salary']; ?>"
-                                            data-bs-toggle="modal" data-bs-target="#editEmployeeModal"
-                                            title="Edit Employee">
-                                        <i class="fas fa-pencil-alt"></i>
-                                    </button>
-                                    <a href="?delete=<?php echo $emp['id']; ?>" class="btn btn-sm btn-outline-danger" 
-                                       onclick="return confirm('Are you sure you want to delete this employee record?')"
-                                       title="Delete Record">
-                                        <i class="fas fa-trash-alt"></i>
-                                    </a>
-                                </div>
-                            </td>
-                        </tr>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="5" class="text-center py-5">
-                                <div class="text-muted mb-2"><i class="fas fa-users-slash fa-3x opacity-25"></i></div>
-                                <div class="fw-bold">No employees found</div>
-                                <div class="small">Try adjusting your search criteria</div>
-                            </td>
-                        </tr>
-                    <?php endif; ?>
+                    <?php foreach ($employees as $emp): 
+                        $daily = round($emp['salary'] / 22, 2);
+                    ?>
+                    <tr>
+                        <td class="ps-4">
+                            <div class="fw-bold text-dark"><?php echo $emp['name']; ?></div>
+                            <div class="text-muted smaller">ID: <?php echo $emp['employee_id']; ?></div>
+                        </td>
+                        <td><span class="badge bg-light text-dark border"><?php echo $emp['position']; ?></span></td>
+                        <td class="fw-bold">₱<?php echo number_format($emp['salary'], 2); ?></td>
+                        <td class="text-muted">₱<?php echo number_format($daily, 2); ?></td>
+                        <td class="text-end pe-4">
+                            <div class="btn-group">
+                                <button class="btn btn-sm btn-outline-primary edit-btn" 
+                                        data-id="<?php echo $emp['id']; ?>"
+                                        data-eid="<?php echo $emp['employee_id']; ?>"
+                                        data-name="<?php echo $emp['name']; ?>"
+                                        data-email="<?php echo $emp['email']; ?>"
+                                        data-pos="<?php echo $emp['position']; ?>"
+                                        data-salary="<?php echo $emp['salary']; ?>"
+                                        data-bs-toggle="modal" data-bs-target="#editEmployeeModal">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <a href="?delete=<?php echo $emp['id']; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this employee?')"><i class="fas fa-trash"></i></a>
+                            </div>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
                 </tbody>
             </table>
         </div>
@@ -231,37 +215,38 @@ include 'sidebar.php';
                 <input type="hidden" name="action" value="add">
                 <div class="modal-body py-4">
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Employee ID</label>
-                        <input type="text" name="employee_id" class="form-control" placeholder="EMP-0000-000" pattern="EMP-\d{4}-\d{3}" title="Format: EMP-0000-000" required>
-                        <div class="form-text smaller text-muted">Format: EMP-2026-001</div>
+                        <label class="form-label small fw-bold">Full Name</label>
+                        <input type="text" name="name" class="form-control" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Username</label>
-                        <input type="text" name="username" class="form-control" placeholder="e.g. johndoe123" required>
+                        <label class="form-label small fw-bold">Email Address</label>
+                        <input type="email" name="email" class="form-control" placeholder="Optional">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Full Name</label>
-                        <input type="text" name="name" class="form-control" placeholder="e.g. John Doe" required>
+                        <label class="form-label small fw-bold">Position</label>
+                        <input type="text" name="position" class="form-control" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Email Address</label>
-                        <input type="email" name="email" class="form-control" placeholder="e.g. john@company.com">
+                        <label class="form-label small fw-bold">Monthly Salary (₱)</label>
+                        <input type="number" step="0.01" name="salary" class="form-control salary-input" required>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Position</label>
-                        <input type="text" name="position" class="form-control" placeholder="e.g. Senior Developer" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Basic Monthly Salary (₱)</label>
-                        <div class="input-group">
-                            <span class="input-group-text bg-light">₱</span>
-                            <input type="number" step="0.01" name="salary" class="form-control" placeholder="0.00" required>
+                    <div class="p-3 bg-light rounded-3 border mt-3 salary-preview d-none">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="small text-muted">Daily Rate:</span>
+                            <span class="small fw-bold text-dark preview-daily">₱0.00</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="small text-muted">Hourly Rate:</span>
+                            <span class="small fw-bold text-dark preview-hourly">₱0.00</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="small text-muted">Est. 15-Day Pay:</span>
+                            <span class="small fw-bold text-primary preview-15day">₱0.00</span>
                         </div>
                     </div>
                 </div>
-                <div class="modal-footer border-0 pt-0">
-                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary px-4">Save Employee</button>
+                <div class="modal-footer border-0">
+                    <button type="submit" class="btn btn-primary w-100">Save Employee</button>
                 </div>
             </form>
         </div>
@@ -276,37 +261,34 @@ include 'sidebar.php';
                 <h5 class="modal-title fw-bold">Edit Employee Record</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <form action="" method="POST">
+            <form action="employees.php" method="POST" id="editEmployeeForm" autocomplete="off">
                 <input type="hidden" name="action" value="edit">
-                <input type="hidden" name="id" id="edit_id">
                 <div class="modal-body py-4">
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Employee ID</label>
-                        <input type="text" name="employee_id" id="edit_eid" class="form-control" required>
+                        <label class="form-label small fw-bold">Employee ID</label>
+                        <input type="text" name="edit_employee_id" id="val_eid" class="form-control" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Full Name</label>
-                        <input type="text" name="name" id="edit_name" class="form-control" required>
+                        <label class="form-label small fw-bold">Full Name</label>
+                        <input type="text" name="edit_name" id="val_name" class="form-control" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Email Address</label>
-                        <input type="email" name="email" id="edit_email" class="form-control">
+                        <label class="form-label small fw-bold">Email Address</label>
+                        <input type="email" name="edit_email" id="val_email" class="form-control" placeholder="Optional">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Position</label>
-                        <input type="text" name="position" id="edit_pos" class="form-control" required>
+                        <label class="form-label small fw-bold">Position</label>
+                        <input type="text" name="edit_position" id="val_pos" class="form-control" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label fw-medium small text-muted">Basic Monthly Salary (₱)</label>
-                        <div class="input-group">
-                            <span class="input-group-text bg-light">₱</span>
-                            <input type="number" step="0.01" name="salary" id="edit_salary" class="form-control" required>
-                        </div>
+                        <label class="form-label small fw-bold">Monthly Salary (₱)</label>
+                        <input type="number" step="0.01" name="edit_salary" id="val_salary" class="form-control salary-input" required>
                     </div>
                 </div>
-                <div class="modal-footer border-0 pt-0">
-                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary px-4">Update Record</button>
+                <!-- Unique ID name and ID to prevent conflicts -->
+                <input type="hidden" name="update_target_id" id="val_update_target_id">
+                <div class="modal-footer border-0">
+                    <button type="submit" class="btn btn-primary w-100">Update Record</button>
                 </div>
             </form>
         </div>
@@ -314,24 +296,75 @@ include 'sidebar.php';
 </div>
 
 <script>
+// Use Vanilla JS to ensure critical ID capture works even if jQuery has issues
 document.addEventListener('DOMContentLoaded', function() {
-    // Re-open Add Modal if there was an error
-    <?php if ($error && isset($_POST['action']) && $_POST['action'] === 'add'): ?>
-    var addModal = new bootstrap.Modal(document.getElementById('addEmployeeModal'));
-    addModal.show();
-    <?php endif; ?>
-
-    const editBtns = document.querySelectorAll('.edit-btn');
-    editBtns.forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.getElementById('edit_id').value = this.dataset.id;
-            document.getElementById('edit_eid').value = this.dataset.eid;
-            document.getElementById('edit_name').value = this.dataset.name;
-            document.getElementById('edit_email').value = this.dataset.email;
-            document.getElementById('edit_pos').value = this.dataset.pos;
-            document.getElementById('edit_salary').value = this.dataset.salary;
+    // Form submission guard
+    const editForm = document.getElementById('editEmployeeForm');
+    if (editForm) {
+        editForm.addEventListener('submit', function(e) {
+            const targetId = document.getElementById('val_update_target_id').value;
+            console.log("Submitting Form - Target ID:", targetId);
+            
+            if (!targetId || targetId === '0' || targetId === '') {
+                e.preventDefault();
+                alert("Error: The record ID is missing. Please close this modal and click the edit button again.");
+                return false;
+            }
         });
+    }
+
+    // Salary preview logic (keeping it jQuery for convenience as it's less critical than the ID)
+    if (window.jQuery) {
+        $('.salary-input').on('input', function() {
+            const monthly = parseFloat($(this).val()) || 0;
+            const preview = $(this).closest('form').find('.salary-preview');
+            if (monthly > 0) {
+                const daily = monthly / 22;
+                const hourly = daily / 8;
+                const cutoff = monthly / 2;
+                preview.removeClass('d-none');
+                preview.find('.preview-daily').text('₱' + daily.toLocaleString(undefined, {minimumFractionDigits: 2}));
+                preview.find('.preview-hourly').text('₱' + hourly.toLocaleString(undefined, {minimumFractionDigits: 2}));
+                preview.find('.preview-15day').text('₱' + cutoff.toLocaleString(undefined, {minimumFractionDigits: 2}));
+            } else {
+                preview.addClass('d-none');
+            }
+        });
+    }
+
+    // Aggressive edit button handler using Vanilla JS delegation
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.edit-btn');
+        if (btn) {
+            // Get attributes directly from the DOM element
+            const id = btn.getAttribute('data-id');
+            const eid = btn.getAttribute('data-eid');
+            const name = btn.getAttribute('data-name');
+            const email = btn.getAttribute('data-email');
+            const pos = btn.getAttribute('data-pos');
+            const salary = btn.getAttribute('data-salary');
+
+            console.log("Edit Triggered - ID from DOM:", id);
+
+            // Fill modal fields immediately using Vanilla JS
+            document.getElementById('val_update_target_id').value = id;
+            document.getElementById('val_eid').value = eid || '';
+            document.getElementById('val_name').value = name || '';
+            document.getElementById('val_email').value = email || '';
+            document.getElementById('val_pos').value = pos || '';
+            document.getElementById('val_salary').value = salary || '';
+            
+            // Trigger input event for salary preview if jQuery is available
+            if (window.jQuery) {
+                $('#val_salary').trigger('input');
+            }
+        }
     });
+
+    if (window.history.replaceState && window.location.href.indexOf('msg=') > -1) {
+        var cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+        window.history.replaceState({path: cleanUrl}, '', cleanUrl);
+    }
 });
 </script>
 

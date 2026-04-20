@@ -32,14 +32,17 @@
         
         <?php if (isEmployee()): ?>
         <p>Self Service</p>
+        <li class="<?php echo (basename($_SERVER['PHP_SELF']) == 'employee_portal.php') ? 'active' : ''; ?>">
+            <a href="employee_portal.php"><i class="fas fa-th-large me-3"></i> Dashboard</a>
+        </li>
         <li class="<?php echo (basename($_SERVER['PHP_SELF']) == 'profile.php') ? 'active' : ''; ?>">
-            <a href="profile.php"><i class="fas fa-user-circle me-3"></i> Personal Profile</a>
+            <a href="profile.php"><i class="fas fa-user-circle me-3"></i> My Profile</a>
         </li>
         <li class="<?php echo (basename($_SERVER['PHP_SELF']) == 'my_attendance.php') ? 'active' : ''; ?>">
             <a href="my_attendance.php"><i class="fas fa-history me-3"></i> My Attendance</a>
         </li>
         <li class="<?php echo (basename($_SERVER['PHP_SELF']) == 'my_payslips.php') ? 'active' : ''; ?>">
-            <a href="my_payslips.php"><i class="fas fa-file-invoice me-3"></i> My Payslips</a>
+            <a href="my_payslips.php"><i class="fas fa-file-invoice-dollar me-3"></i> My Payroll / Payslips</a>
         </li>
         <?php endif; ?>
 
