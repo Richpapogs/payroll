@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['calculate_payroll'])
         $stmt_att->execute([$employee_id, $cutoff_start, $cutoff_end]);
         $attendance = $stmt_att->fetchAll();
 
-        $days_worked = 0;
+        $total_worked_hrs = 0;
         $total_ot_hrs = 0;
         $total_double_pay_days = 0;
         $total_late_mins = 0;
@@ -45,21 +45,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['calculate_payroll'])
 
         foreach ($attendance as $att) {
             if ($att['status'] === 'Present') {
-                $days_worked++;
+                $total_worked_hrs += $att['total_hours'];
                 if ($att['total_hours'] > STANDARD_HOURS) {
                     $total_ot_hrs += ($att['total_hours'] - STANDARD_HOURS);
                 }
                 if ($att['is_double_pay']) $total_double_pay_days++;
                 $total_late_mins += $att['late_minutes'];
                 $total_undertime_mins += $att['undertime_minutes'];
-            } elseif ($att['status'] === 'Half-day') {
-                $days_worked += 0.5;
-                $total_late_mins += $att['late_minutes'];
-                $total_undertime_mins += $att['undertime_minutes'];
             }
         }
 
-        $base_pay = calculateBasePay($daily_rate, $days_worked);
+        // Add Approved-Paid Leaves
+        $stmt_leaves = $pdo->prepare("SELECT SUM(requested_hours) FROM leave_requests WHERE employee_id = ? AND status = 'Approved' AND payment_status = 'Paid' AND (start_date BETWEEN ? AND ? OR end_date BETWEEN ? AND ?)");
+        $stmt_leaves->execute([$employee_id, $cutoff_start, $cutoff_end, $cutoff_start, $cutoff_end]);
+        $paid_leave_hours = $stmt_leaves->fetchColumn() ?: 0;
+        $total_worked_hrs += $paid_leave_hours;
+
+        $days_worked_decimal = round($total_worked_hrs / STANDARD_HOURS, 2);
+        $base_pay = calculateBasePay($daily_rate, $days_worked_decimal);
         $calc = calculateGrossPay($base_pay, $total_ot_hrs, $hourly_rate, $bonus, $total_double_pay_days, $daily_rate, $total_late_mins, $total_undertime_mins);
         $gross_pay = $calc['gross'];
         
@@ -74,8 +77,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['calculate_payroll'])
         $net_pay = round($gross_pay - $total_deductions, 2);
 
         if ($is_edit) {
-            $stmt_upd = $pdo->prepare("UPDATE payroll SET basic_pay=?, overtime_pay=?, bonus_pay=?, double_pay_amt=?, attendance_deductions=?, gross_pay=?, sss=?, philhealth=?, pagibig=?, withholding_tax=?, total_deductions=?, net_pay=? WHERE id=?");
-            $stmt_upd->execute([$base_pay, $calc['ot_amt'], $bonus, $calc['double_pay_amt'], $calc['att_deduction'], $gross_pay, $sss, $philhealth, $pagibig, $tax, $total_deductions, $net_pay, $payroll_id]);
+            $stmt_upd = $pdo->prepare("UPDATE payroll SET cutoff_start=?, cutoff_end=?, days_worked=?, basic_pay=?, overtime_pay=?, bonus_pay=?, double_pay_amt=?, attendance_deductions=?, gross_pay=?, sss=?, philhealth=?, pagibig=?, withholding_tax=?, total_deductions=?, net_pay=? WHERE id=?");
+            $stmt_upd->execute([$cutoff_start, $cutoff_end, $days_worked_decimal, $base_pay, $calc['ot_amt'], $bonus, $calc['double_pay_amt'], $calc['att_deduction'], $gross_pay, $sss, $philhealth, $pagibig, $tax, $total_deductions, $net_pay, $payroll_id]);
             
             // Notify Admin
             $stmt_notif = $pdo->prepare("INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)");
@@ -83,8 +86,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['calculate_payroll'])
 
             $message = "Payroll record updated successfully!";
         } else {
-            $stmt_save = $pdo->prepare("INSERT INTO payroll (employee_id, cutoff_start, cutoff_end, basic_pay, overtime_pay, bonus_pay, double_pay_amt, attendance_deductions, gross_pay, sss, philhealth, pagibig, withholding_tax, total_deductions, net_pay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt_save->execute([$employee_id, $cutoff_start, $cutoff_end, $base_pay, $calc['ot_amt'], $bonus, $calc['double_pay_amt'], $calc['att_deduction'], $gross_pay, $sss, $philhealth, $pagibig, $tax, $total_deductions, $net_pay]);
+            $stmt_save = $pdo->prepare("INSERT INTO payroll (employee_id, cutoff_start, cutoff_end, days_worked, basic_pay, overtime_pay, bonus_pay, double_pay_amt, attendance_deductions, gross_pay, sss, philhealth, pagibig, withholding_tax, total_deductions, net_pay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt_save->execute([$employee_id, $cutoff_start, $cutoff_end, $days_worked_decimal, $base_pay, $calc['ot_amt'], $bonus, $calc['double_pay_amt'], $calc['att_deduction'], $gross_pay, $sss, $philhealth, $pagibig, $tax, $total_deductions, $net_pay]);
             
             // Notify Admin
             $stmt_notif = $pdo->prepare("INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)");
@@ -126,7 +129,25 @@ if (isset($_GET['delete'])) {
 $stmt = $pdo->prepare("SELECT p.*, e.name, e.employee_id as eid FROM payroll p JOIN employees e ON p.employee_id = e.id ORDER BY p.payroll_date DESC");
 $stmt->execute();
 $payrolls = $stmt->fetchAll();
-$employees = $pdo->query("SELECT id, name, employee_id FROM employees ORDER BY name ASC")->fetchAll();
+
+// Re-fetch active employees for the modal dropdown
+$employees_list = $pdo->query("SELECT id, name, employee_id FROM employees WHERE status = 'Active' ORDER BY name ASC")->fetchAll();
+
+// Calculate default cutoff dates (21st of current/prev month to 20th of current/next month)
+$today = new DateTime();
+$day = (int)$today->format('d');
+
+if ($day >= 21) {
+    $default_start = $today->format('Y-m-21');
+    $next_month = clone $today;
+    $next_month->modify('+1 month');
+    $default_end = $next_month->format('Y-m-20');
+} else {
+    $prev_month = clone $today;
+    $prev_month->modify('-1 month');
+    $default_start = $prev_month->format('Y-m-21');
+    $default_end = $today->format('Y-m-20');
+}
 
 include 'header.php';
 include 'sidebar.php';
@@ -165,21 +186,14 @@ include 'sidebar.php';
                     </tr>
                 </thead>
                 <tbody>
-                    <?php foreach ($payrolls as $p): 
-                        // Days worked = basic_pay / daily_rate (reversing for display)
-                        $stmt_e = $pdo->prepare("SELECT salary FROM employees WHERE id = ?");
-                        $stmt_e->execute([$p['employee_id']]);
-                        $m_sal = $stmt_e->fetchColumn();
-                        $d_rate = $m_sal / 22;
-                        $days = $d_rate > 0 ? round($p['basic_pay'] / $d_rate, 1) : 0;
-                    ?>
+                    <?php foreach ($payrolls as $p): ?>
                     <tr>
                         <td class="ps-4">
                             <div class="fw-bold text-dark"><?php echo $p['name']; ?></div>
                             <div class="text-muted smaller"><?php echo $p['eid']; ?></div>
                         </td>
                         <td class="small"><?php echo date('M d', strtotime($p['cutoff_start'])); ?> - <?php echo date('M d', strtotime($p['cutoff_end'])); ?></td>
-                        <td><span class="badge bg-light text-dark border"><?php echo $days; ?> Days</span></td>
+                        <td><span class="badge bg-light text-dark border"><?php echo number_format($p['days_worked'], 2); ?> Days</span></td>
                         <td class="fw-bold">₱<?php echo number_format($p['gross_pay'], 2); ?></td>
                         <td>
                             <span class="text-danger small fw-bold" data-bs-toggle="tooltip" data-bs-html="true" title="SSS: ₱<?php echo number_format($p['sss'], 2); ?><br>PhilHealth: ₱<?php echo number_format($p['philhealth'], 2); ?><br>Pag-IBIG: ₱<?php echo number_format($p['pagibig'], 2); ?><br>Tax: ₱<?php echo number_format($p['withholding_tax'], 2); ?>">
@@ -224,19 +238,20 @@ include 'sidebar.php';
                     <div class="mb-3">
                         <label class="form-label small fw-bold">Select Employee</label>
                         <select name="employee_id" class="form-select" required>
-                            <?php foreach ($employees as $e): ?>
-                                <option value="<?php echo $e['id']; ?>"><?php echo $e['name']; ?> (<?php echo $e['employee_id']; ?>)</option>
+                            <option value="">Choose employee...</option>
+                            <?php foreach ($employees_list as $emp): ?>
+                                <option value="<?php echo $emp['id']; ?>"><?php echo h($emp['name']); ?> (<?php echo h($emp['employee_id']); ?>)</option>
                             <?php endforeach; ?>
                         </select>
                     </div>
                     <div class="row g-2 mb-3">
                         <div class="col-6">
                             <label class="form-label small fw-bold">Start Date</label>
-                            <input type="date" name="cutoff_start" class="form-control" required>
+                            <input type="date" name="cutoff_start" class="form-control" value="<?php echo $default_start; ?>" required>
                         </div>
                         <div class="col-6">
                             <label class="form-label small fw-bold">End Date</label>
-                            <input type="date" name="cutoff_end" class="form-control" required>
+                            <input type="date" name="cutoff_end" class="form-control" value="<?php echo $default_end; ?>" required>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -257,27 +272,34 @@ include 'sidebar.php';
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow-lg">
             <div class="modal-header border-0 pb-0">
-                <h5 class="modal-title fw-bold">Edit / Recalculate Payroll</h5>
+                <h5 class="modal-title fw-bold">Edit Payroll Record</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form action="" method="POST">
                 <input type="hidden" name="edit_payroll" value="1">
-                <input type="hidden" name="payroll_id" id="edit_p_id">
-                <input type="hidden" name="employee_id" id="edit_p_eid">
+                <input type="hidden" name="payroll_id" id="edit_payroll_id">
                 <div class="modal-body py-4">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Select Employee</label>
+                        <select name="employee_id" id="edit_employee_id" class="form-select" required>
+                            <?php foreach ($employees_list as $emp): ?>
+                                <option value="<?php echo $emp['id']; ?>"><?php echo h($emp['name']); ?> (<?php echo h($emp['employee_id']); ?>)</option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                     <div class="row g-2 mb-3">
                         <div class="col-6">
                             <label class="form-label small fw-bold">Start Date</label>
-                            <input type="date" name="cutoff_start" id="edit_p_start" class="form-control" readonly>
+                            <input type="date" name="cutoff_start" id="edit_cutoff_start" class="form-control" required>
                         </div>
                         <div class="col-6">
                             <label class="form-label small fw-bold">End Date</label>
-                            <input type="date" name="cutoff_end" id="edit_p_end" class="form-control" readonly>
+                            <input type="date" name="cutoff_end" id="edit_cutoff_end" class="form-control" required>
                         </div>
                     </div>
-                    <div class="mb-3">
-                        <label class="form-label small fw-bold">Bonus/Adjustments (₱)</label>
-                        <input type="number" step="0.01" name="bonus" id="edit_p_bonus" class="form-control" required>
+                    <div class="mb-0">
+                        <label class="form-label small fw-bold">Additional Bonus (₱)</label>
+                        <input type="number" step="0.01" name="bonus" id="edit_bonus" class="form-control" value="0.00">
                     </div>
                     <div class="alert alert-info smaller border-0 mb-0">
                         <i class="fas fa-info-circle me-1"></i> Editing will recalculate all values based on current attendance logs and salary rates.
@@ -296,13 +318,13 @@ $(function () {
   $('[data-bs-toggle="tooltip"]').tooltip();
 
   $('.edit-payroll-btn').on('click', function() {
-      const data = $(this).data();
-      $('#edit_p_id').val(data.id);
-      $('#edit_p_eid').val(data.eid);
-      $('#edit_p_start').val(data.start);
-      $('#edit_p_end').val(data.end);
-      $('#edit_p_bonus').val(data.bonus);
-  });
+        const data = $(this).data();
+        $('#edit_payroll_id').val(data.id);
+        $('#edit_employee_id').val(data.eid);
+        $('#edit_cutoff_start').val(data.start);
+        $('#edit_cutoff_end').val(data.end);
+        $('#edit_bonus').val(data.bonus);
+    });
 });
 </script>
 

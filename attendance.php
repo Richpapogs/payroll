@@ -139,7 +139,6 @@ include 'sidebar.php';
                                     <option value="Present" <?php echo ($emp['status'] === 'Present') ? 'selected' : ''; ?>>Present</option>
                                     <option value="Absent" <?php echo ($emp['status'] === 'Absent') ? 'selected' : ''; ?>>Absent</option>
                                     <option value="Leave" <?php echo ($emp['status'] === 'Leave') ? 'selected' : ''; ?>>Leave</option>
-                                    <option value="Half-day" <?php echo ($emp['status'] === 'Half-day') ? 'selected' : ''; ?>>Half-day</option>
                                 </select>
                             </td>
                             <td>

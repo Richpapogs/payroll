@@ -23,6 +23,9 @@
         <li class="<?php echo (basename($_SERVER['PHP_SELF']) == 'reports.php') ? 'active' : ''; ?>">
             <a href="reports.php"><i class="fas fa-chart-pie me-3"></i> Analytics & Reports</a>
         </li>
+        <li class="<?php echo (basename($_SERVER['PHP_SELF']) == 'manage_leaves.php') ? 'active' : ''; ?>">
+            <a href="manage_leaves.php"><i class="fas fa-calendar-alt me-3"></i> Leave Management</a>
+        </li>
         <?php if (isAdmin()): ?>
         <li class="<?php echo (basename($_SERVER['PHP_SELF']) == 'maintenance.php') ? 'active' : ''; ?>">
             <a href="maintenance.php"><i class="fas fa-tools me-3"></i> System Maintenance</a>
@@ -68,7 +71,22 @@
                 $stmt_unread = $pdo->prepare("SELECT COUNT(*) FROM notifications WHERE user_id = ? AND is_read = 0");
                 $stmt_unread->execute([$_SESSION['user_id']]);
                 $unread_count = $stmt_unread->fetchColumn();
+
+                // Fetch pending leave requests for Admin/HR
+                $pending_leaves = 0;
+                if (isAdmin() || isHR()) {
+                    $stmt_pending = $pdo->query("SELECT COUNT(*) FROM leave_requests WHERE status = 'Pending'");
+                    $pending_leaves = $stmt_pending->fetchColumn();
+                }
             ?>
+            <?php if ($pending_leaves > 0): ?>
+            <a href="manage_leaves.php" class="nav-link me-3 position-relative" title="Pending Leave Requests">
+                <i class="fas fa-calendar-alt text-warning"></i>
+                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-warning text-dark" style="font-size: 0.6rem;">
+                    <?php echo $pending_leaves; ?>
+                </span>
+            </a>
+            <?php endif; ?>
             <a href="notifications.php" class="nav-link me-3 position-relative">
                 <i class="fas fa-bell text-muted"></i>
                 <?php if ($unread_count > 0): ?>

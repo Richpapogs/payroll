@@ -85,10 +85,10 @@ function calculateTax($taxable_income_cutoff) {
 }
 
 /**
- * Calculate Base Pay based on actual days worked
+ * Calculate Base Pay based on actual hours worked (converted to days for rate application)
  */
-function calculateBasePay($daily_rate, $days_present) {
-    return round($daily_rate * $days_present, 2);
+function calculateBasePay($daily_rate, $days_present_decimal) {
+    return round($daily_rate * $days_present_decimal, 2);
 }
 
 /**

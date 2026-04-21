@@ -12,13 +12,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['request_leave'])) {
     $start = $_POST['start_date'];
     $end = $_POST['end_date'];
     $reason = trim($_POST['reason']);
+    $duration = $_POST['duration'];
+    $requested_hours = ($duration === 'Full Day') ? 8 : (float)$_POST['requested_hours'];
 
     if (strtotime($start) < strtotime(date('Y-m-d'))) {
         $error = "Start date cannot be in the past.";
     } else {
         try {
-            $stmt = $pdo->prepare("INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, reason) VALUES (?, ?, ?, ?, ?)");
-            $stmt->execute([$emp_id, $type, $start, $end, $reason]);
+            $stmt = $pdo->prepare("INSERT INTO leave_requests (employee_id, leave_type, start_date, end_date, reason, duration, requested_hours) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$emp_id, $type, $start, $end, $reason, $duration, $requested_hours]);
             $message = "Leave request submitted successfully!";
         } catch (PDOException $e) {
             $error = "Error submitting request: " . $e->getMessage();
@@ -75,7 +77,6 @@ include 'sidebar.php';
                                     $badge = 'bg-success';
                                     if ($a['status'] === 'Absent') $badge = 'bg-danger';
                                     if ($a['status'] === 'Leave') $badge = 'bg-info';
-                                    if ($a['status'] === 'Half-day') $badge = 'bg-warning';
                                     ?>
                                     <span class="badge <?php echo $badge; ?>-subtle text-dark border smaller"><?php echo $a['status']; ?></span>
                                 </td>
@@ -110,6 +111,19 @@ include 'sidebar.php';
                             <option value="Vacation">Vacation Leave</option>
                             <option value="Emergency">Emergency Leave</option>
                         </select>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-12">
+                            <label class="form-label small fw-bold text-muted">Leave Duration</label>
+                            <select name="duration" id="leave_duration" class="form-select form-select-sm" required>
+                                <option value="Full Day">Full Day (8 hrs)</option>
+                                <option value="Partial Day">Partial Day (Specify hrs)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="partial_hrs_container" class="mb-3 d-none">
+                        <label class="form-label small fw-bold text-muted">Requested Hours</label>
+                        <input type="number" name="requested_hours" step="0.5" min="0.5" max="8" class="form-control form-control-sm" value="8">
                     </div>
                     <div class="row g-2 mb-3">
                         <div class="col-6">
@@ -185,4 +199,22 @@ include 'sidebar.php';
     </div>
 </div>
 
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const leaveDuration = document.getElementById('leave_duration');
+    const partialHrsContainer = document.getElementById('partial_hrs_container');
+    const requestedHoursInput = document.querySelector('input[name="requested_hours"]');
+
+    if (leaveDuration && partialHrsContainer) {
+        leaveDuration.addEventListener('change', function() {
+            if (this.value === 'Partial Day') {
+                partialHrsContainer.classList.remove('d-none');
+            } else {
+                partialHrsContainer.classList.add('d-none');
+                if (requestedHoursInput) requestedHoursInput.value = 8;
+            }
+        });
+    }
+});
+</script>
 <?php include 'footer.php'; ?>
