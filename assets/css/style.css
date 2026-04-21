@@ -49,11 +49,11 @@ a, a:hover, a:focus {
     transition: all 0.3s;
     min-height: 100vh;
     box-shadow: 4px 0 10px rgba(0,0,0,0.05);
-    margin-left: 0;
+    margin-left: 0; /* Default for Desktop: Visible */
     z-index: 1000;
 }
 
-#sidebar.collapsed {
+#sidebar.sidebar-toggled {
     margin-left: -260px;
 }
 
@@ -242,11 +242,12 @@ a, a:hover, a:focus {
     #sidebar {
         position: fixed;
         height: 100vh;
-        margin-left: -260px; /* Hide by default on mobile */
+        margin-left: -260px; /* Default for Mobile: Hidden */
+        z-index: 1001;
     }
     
-    #sidebar.active {
-        margin-left: 0; /* Use .active for mobile toggle to avoid conflict with .collapsed logic */
+    #sidebar.sidebar-toggled {
+        margin-left: 0 !important; /* Mobile: Show when toggled */
     }
     
     #content {

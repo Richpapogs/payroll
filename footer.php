@@ -11,16 +11,16 @@
 
 <script>
 $(document).ready(function () {
-    // Check for saved sidebar state
-    if (localStorage.getItem('sidebar-collapsed') === 'true') {
-        $('#sidebar').addClass('collapsed');
+    // Apply saved state from localStorage
+    if (localStorage.getItem('sidebar-toggled') === 'true') {
+        $('#sidebar').addClass('sidebar-toggled');
     }
 
     // Sidebar toggle
     $('#sidebarCollapse').on('click', function () {
-        $('#sidebar').toggleClass('collapsed');
+        $('#sidebar').toggleClass('sidebar-toggled');
         // Save state to localStorage
-        localStorage.setItem('sidebar-collapsed', $('#sidebar').hasClass('collapsed'));
+        localStorage.setItem('sidebar-toggled', $('#sidebar').hasClass('sidebar-toggled'));
     });
 
     // Initialize all popovers
