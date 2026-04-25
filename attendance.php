@@ -1,5 +1,6 @@
 <?php
 require_once 'config.php';
+require_once 'payroll_helper.php';
 authorize(['admin', 'hr']);
 
 $message = '';
@@ -27,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_attendance'])) {
                 $late_mins = 0;
                 $undertime_mins = 0;
 
-                if ($status === 'Present' && $time_in && $time_out) {
+                if (($status === 'Present' || $status === 'Half-day') && $time_in && $time_out) {
                     // Fetch employee shift
                     $stmt_s = $pdo->prepare("SELECT shift FROM employees WHERE id = ?");
                     $stmt_s->execute([$employee_id]);
@@ -80,6 +81,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_attendance'])) {
                     $stmt_insert->execute([$employee_id, $attendance_date, $status, $time_in, $time_out, $total_hours, $late_mins, $undertime_mins, $is_double_pay]);
                 }
             }
+
+            // Automatic Trigger: Upsert payroll records for every employee updated
+            foreach ($records as $employee_id => $data) {
+                upsertPayroll($pdo, $employee_id, $attendance_date);
+            }
+
             logActivity($pdo, $_SESSION['user_id'], 'Mark Attendance', "Attendance for $attendance_date (Double Pay: " . (isset($_POST['global_double_pay']) ? 'Yes' : 'No') . ")");
             $pdo->commit();
             $message = "Attendance logs updated successfully!";
@@ -161,6 +168,7 @@ include 'sidebar.php';
                             <td>
                                 <select name="attendance[<?php echo $emp['id']; ?>][status]" class="form-select form-select-sm status-select">
                                     <option value="Present" <?php echo ($emp['status'] === 'Present') ? 'selected' : ''; ?>>Present</option>
+                                    <option value="Half-day" <?php echo ($emp['status'] === 'Half-day') ? 'selected' : ''; ?>>Half-day</option>
                                     <option value="Absent" <?php echo ($emp['status'] === 'Absent') ? 'selected' : ''; ?>>Absent</option>
                                     <option value="Leave" <?php echo ($emp['status'] === 'Leave') ? 'selected' : ''; ?>>Leave</option>
                                 </select>

@@ -18,81 +18,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['calculate_payroll'])
     try {
         $pdo->beginTransaction();
         
-        $stmt_emp = $pdo->prepare("SELECT * FROM employees WHERE id = ?");
-        $stmt_emp->execute([$employee_id]);
-        $employee = $stmt_emp->fetch();
+        if ($is_edit) {
+            // Update bonus first so recalculatePayroll picks it up
+            $stmt_upd_bonus = $pdo->prepare("UPDATE payroll SET bonus_pay = ?, cutoff_start = ?, cutoff_end = ? WHERE id = ?");
+            $stmt_upd_bonus->execute([$bonus, $cutoff_start, $cutoff_end, $payroll_id]);
+        } else {
+            // Create initial record
+            $stmt_ins = $pdo->prepare("INSERT INTO payroll (employee_id, cutoff_start, cutoff_end, bonus_pay, status, payroll_date) VALUES (?, ?, ?, ?, 'Pending', ?)");
+            $stmt_ins->execute([$employee_id, $cutoff_start, $cutoff_end, $bonus, date('Y-m-d')]);
+            $payroll_id = $pdo->lastInsertId();
+        }
 
-        if (!$employee) throw new Exception("Employee not found.");
+        // Use the centralized helper for all math and the single-operation UPDATE
+        if (!recalculatePayroll($pdo, $payroll_id)) {
+            throw new Exception("Failed to calculate payroll.");
+        }
+
+        // Fetch employee name for notifications
+        $stmt_emp = $pdo->prepare("SELECT name FROM employees WHERE id = ?");
+        $stmt_emp->execute([$employee_id]);
+        $emp_name = $stmt_emp->fetchColumn();
+
+        // Notify Admin
+        $stmt_notif = $pdo->prepare("INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)");
+        $stmt_notif->execute([$_SESSION['user_id'], $is_edit ? 'Payroll Updated' : 'Payroll Generated', "Payroll for $emp_name ($cutoff_start to $cutoff_end) has been processed."]);
 
         if (!$is_edit) {
-            $stmt_dup = $pdo->prepare("SELECT id FROM payroll WHERE employee_id = ? AND cutoff_start = ? AND cutoff_end = ?");
-            $stmt_dup->execute([$employee_id, $cutoff_start, $cutoff_end]);
-            if ($stmt_dup->rowCount() > 0) throw new Exception("Payroll already exists for this cutoff.");
-        }
-
-        $daily_rate = calculateDailyRate($employee['salary']);
-        $hourly_rate = calculateHourlyRate($daily_rate);
-
-        $stmt_att = $pdo->prepare("SELECT * FROM attendance WHERE employee_id = ? AND attendance_date BETWEEN ? AND ?");
-        $stmt_att->execute([$employee_id, $cutoff_start, $cutoff_end]);
-        $attendance = $stmt_att->fetchAll();
-
-        $total_worked_hrs = 0;
-        $total_ot_hrs = 0;
-        $total_double_pay_days = 0;
-        $total_late_mins = 0;
-        $total_undertime_mins = 0;
-
-        foreach ($attendance as $att) {
-            if ($att['status'] === 'Present') {
-                $total_worked_hrs += $att['total_hours'];
-                if ($att['total_hours'] > STANDARD_HOURS) {
-                    $total_ot_hrs += ($att['total_hours'] - STANDARD_HOURS);
-                }
-                if ($att['is_double_pay']) $total_double_pay_days++;
-                $total_late_mins += $att['late_minutes'];
-                $total_undertime_mins += $att['undertime_minutes'];
-            }
-        }
-
-        // Add Approved-Paid Leaves
-        $stmt_leaves = $pdo->prepare("SELECT SUM(requested_hours) FROM leave_requests WHERE employee_id = ? AND status = 'Approved' AND payment_status = 'Paid' AND (start_date BETWEEN ? AND ? OR end_date BETWEEN ? AND ?)");
-        $stmt_leaves->execute([$employee_id, $cutoff_start, $cutoff_end, $cutoff_start, $cutoff_end]);
-        $paid_leave_hours = $stmt_leaves->fetchColumn() ?: 0;
-        $total_worked_hrs += $paid_leave_hours;
-
-        $days_worked_decimal = round($total_worked_hrs / STANDARD_HOURS, 2);
-        $base_pay = calculateBasePay($daily_rate, $days_worked_decimal);
-        $calc = calculateGrossPay($base_pay, $total_ot_hrs, $hourly_rate, $bonus, $total_double_pay_days, $daily_rate, $total_late_mins, $total_undertime_mins);
-        $gross_pay = $calc['gross'];
-        
-        $sss = calculateSSS($employee['salary']);
-        $philhealth = calculatePhilHealth($employee['salary']);
-        $pagibig = calculatePagIBIG($employee['salary']);
-
-        $taxable_income = $gross_pay - ($sss + $philhealth + $pagibig);
-        $tax = calculateTax($taxable_income);
-
-        $total_deductions = round($sss + $philhealth + $pagibig + $tax, 2);
-        $net_pay = round($gross_pay - $total_deductions, 2);
-
-        if ($is_edit) {
-            $stmt_upd = $pdo->prepare("UPDATE payroll SET cutoff_start=?, cutoff_end=?, days_worked=?, basic_pay=?, overtime_pay=?, bonus_pay=?, double_pay_amt=?, attendance_deductions=?, gross_pay=?, sss=?, philhealth=?, pagibig=?, withholding_tax=?, total_deductions=?, net_pay=? WHERE id=?");
-            $stmt_upd->execute([$cutoff_start, $cutoff_end, $days_worked_decimal, $base_pay, $calc['ot_amt'], $bonus, $calc['double_pay_amt'], $calc['att_deduction'], $gross_pay, $sss, $philhealth, $pagibig, $tax, $total_deductions, $net_pay, $payroll_id]);
-            
-            // Notify Admin
-            $stmt_notif = $pdo->prepare("INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)");
-            $stmt_notif->execute([$_SESSION['user_id'], 'Payroll Updated', "Payroll for " . $employee['name'] . " ($cutoff_start to $cutoff_end) has been recalculated."]);
-
-            $message = "Payroll record updated successfully!";
-        } else {
-            $stmt_save = $pdo->prepare("INSERT INTO payroll (employee_id, cutoff_start, cutoff_end, days_worked, basic_pay, overtime_pay, bonus_pay, double_pay_amt, attendance_deductions, gross_pay, sss, philhealth, pagibig, withholding_tax, total_deductions, net_pay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt_save->execute([$employee_id, $cutoff_start, $cutoff_end, $days_worked_decimal, $base_pay, $calc['ot_amt'], $bonus, $calc['double_pay_amt'], $calc['att_deduction'], $gross_pay, $sss, $philhealth, $pagibig, $tax, $total_deductions, $net_pay]);
-            
-            // Notify Admin
-            $stmt_notif = $pdo->prepare("INSERT INTO notifications (user_id, title, message) VALUES (?, ?, ?)");
-            $stmt_notif->execute([$_SESSION['user_id'], 'Payroll Generated', "Payroll for " . $employee['name'] . " ($cutoff_start to $cutoff_end) was successfully generated."]);
-
             // Notify Employee
             $stmt_user_id = $pdo->prepare("SELECT id FROM users WHERE employee_id = ?");
             $stmt_user_id->execute([$employee_id]);
@@ -101,10 +52,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && (isset($_POST['calculate_payroll'])
             if ($target_user_id) {
                 $stmt_notif->execute([$target_user_id, 'New Payslip Available', "Your payslip for the period " . date('M d', strtotime($cutoff_start)) . " to " . date('M d', strtotime($cutoff_end)) . " is now available."]);
             }
-
-            $message = "Payroll generated successfully!";
         }
 
+        $message = $is_edit ? "Payroll record updated successfully!" : "Payroll generated successfully!";
         $pdo->commit();
     } catch (Exception $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -126,7 +76,10 @@ if (isset($_GET['delete'])) {
 }
 
 // Fetch Payroll List
-$stmt = $pdo->prepare("SELECT p.*, e.name, e.employee_id as eid FROM payroll p JOIN employees e ON p.employee_id = e.id ORDER BY p.payroll_date DESC");
+$stmt = $pdo->prepare("SELECT p.*, e.name, e.employee_id as eid, e.salary as monthly_base
+                       FROM payroll p 
+                       JOIN employees e ON p.employee_id = e.id 
+                       ORDER BY p.payroll_date DESC, e.name ASC");
 $stmt->execute();
 $payrolls = $stmt->fetchAll();
 
@@ -158,9 +111,6 @@ include 'sidebar.php';
         <h2 class="h4 mb-1 fw-bold text-dark">Payroll Management</h2>
         <p class="text-muted small mb-0">Attendance-based Salary Computation (Divisor: 22)</p>
     </div>
-    <button class="btn btn-primary shadow-sm" data-bs-toggle="modal" data-bs-target="#calculatePayrollModal">
-        <i class="fas fa-plus me-2"></i> Process Cutoff
-    </button>
 </div>
 
 <?php if ($message): ?>
@@ -197,8 +147,14 @@ include 'sidebar.php';
                                 echo date('F d, Y', strtotime($p['cutoff_start'])) . ' - ' . date('F d, Y', strtotime($p['cutoff_end']));
                             ?>
                         </td>
-                        <td><span class="badge bg-light text-dark border"><?php echo number_format($p['days_worked'], 2); ?> Days</span></td>
-                        <td class="fw-bold">₱<?php echo number_format($p['gross_pay'], 2); ?></td>
+                        <td>
+                            <span class="badge bg-light text-dark border">
+                                <?php echo number_format($p['days_worked'], 3); ?> Days
+                            </span>
+                        </td>
+                        <td class="fw-bold">
+                            ₱<?php echo number_format($p['gross_pay'], 2); ?>
+                        </td>
                         <td>
                             <span class="text-danger small fw-bold" data-bs-toggle="tooltip" data-bs-html="true" title="SSS: ₱<?php echo number_format($p['sss'], 2); ?><br>PhilHealth: ₱<?php echo number_format($p['philhealth'], 2); ?><br>Pag-IBIG: ₱<?php echo number_format($p['pagibig'], 2); ?><br>Tax: ₱<?php echo number_format($p['withholding_tax'], 2); ?>">
                                 -₱<?php echo number_format($p['total_deductions'], 2); ?> <i class="fas fa-info-circle smaller"></i>

@@ -63,6 +63,7 @@ $ot_hrs = $hourly_rate > 0 ? round($p['overtime_pay'] / $hourly_rate, 1) : 0;
 <body onload="window.print()">
     <div class="container no-print mb-4 text-center">
         <button onclick="window.print()" class="btn btn-primary px-4 shadow-sm me-2 fw-bold"><i class="fas fa-print me-2"></i> Print Payslip</button>
+        <a href="payslip_pdf.php?id=<?php echo $p['id']; ?>" class="btn btn-dark px-4 shadow-sm me-2 fw-bold"><i class="fas fa-file-pdf me-2"></i> Download Protected PDF</a>
         <a href="javascript:window.close()" class="btn btn-light border px-4 fw-bold">Close Tab</a>
     </div>
 

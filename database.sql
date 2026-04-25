@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS employees (
     position VARCHAR(100) NOT NULL,
     salary DECIMAL(10, 2) NOT NULL DEFAULT 15000.00, -- Default for 15-day cutoff
     email VARCHAR(100) DEFAULT NULL,
+    birthdate DATE DEFAULT NULL,
+    shift ENUM('Morning', 'Night') DEFAULT 'Night',
     status ENUM('Active', 'Inactive') DEFAULT 'Active',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -33,7 +35,11 @@ CREATE TABLE IF NOT EXISTS leave_requests (
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     reason TEXT,
+    duration ENUM('Full Day', 'Half Day') DEFAULT 'Full Day',
+    requested_hours DECIMAL(4, 2) DEFAULT 8.00,
     status ENUM('Pending', 'Approved', 'Rejected') DEFAULT 'Pending',
+    payment_status ENUM('Paid', 'Unpaid') DEFAULT 'Unpaid',
+    attachment VARCHAR(255) DEFAULT NULL,
     is_paid BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
@@ -61,6 +67,7 @@ CREATE TABLE IF NOT EXISTS payroll (
     employee_id INT NOT NULL,
     cutoff_start DATE NOT NULL,
     cutoff_end DATE NOT NULL,
+    days_worked DECIMAL(5, 3) DEFAULT 0.000,
     basic_pay DECIMAL(10, 2) NOT NULL,
     overtime_pay DECIMAL(10, 2) DEFAULT 0.00,
     bonus_pay DECIMAL(10, 2) DEFAULT 0.00,
@@ -73,6 +80,7 @@ CREATE TABLE IF NOT EXISTS payroll (
     withholding_tax DECIMAL(10, 2) NOT NULL,
     total_deductions DECIMAL(10, 2) NOT NULL,
     net_pay DECIMAL(10, 2) NOT NULL,
+    status ENUM('Pending', 'Paid', 'Cancelled') DEFAULT 'Pending',
     payroll_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY (employee_id, cutoff_start, cutoff_end),
     FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE

@@ -32,20 +32,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $position = trim($_POST['position']);
         $salary = (float)$_POST['salary'];
         $email = trim($_POST['email'] ?? '');
+        $birthdate = $_POST['birthdate'] ?? null;
         $shift = $_POST['shift'] ?? 'Night';
 
-        if (empty($name) || empty($position) || $salary <= 0) {
-            $error = "All fields are required for new employees.";
+        if (empty($name) || empty($position) || $salary <= 0 || empty($birthdate)) {
+            $error = "All fields (including Birthdate) are required for new employees.";
         } else {
             try {
                 $pdo->beginTransaction();
                 $employee_id = generateNextEmployeeID($pdo);
-                $stmt = $pdo->prepare("INSERT INTO employees (employee_id, name, position, salary, email, shift) VALUES (?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$employee_id, $name, $position, $salary, $email, $shift]);
+                $stmt = $pdo->prepare("INSERT INTO employees (employee_id, name, position, salary, email, birthdate, shift) VALUES (?, ?, ?, ?, ?, ?, ?)");
+                $stmt->execute([$employee_id, $name, $position, $salary, $email, $birthdate, $shift]);
                 $new_emp_id = $pdo->lastInsertId();
                 
                 $username = strtolower(str_replace(' ', '', $name));
-                $temp_password = $username . $employee_id;
+                // New logic: name + birthdate (YYYYMMDD)
+                $bday_numeric = str_replace('-', '', $birthdate);
+                $temp_password = $username . $bday_numeric;
                 $hashed_password = password_hash($temp_password, PASSWORD_DEFAULT);
                 
                 $stmt_user = $pdo->prepare("INSERT INTO users (username, password, role, employee_id, first_login) VALUES (?, ?, 'employee', ?, TRUE)");
@@ -72,6 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pos = isset($_POST['edit_position']) ? trim($_POST['edit_position']) : '';
         $sal = isset($_POST['edit_salary']) ? (float)$_POST['edit_salary'] : 0;
         $email = (isset($_POST['edit_email']) && trim($_POST['edit_email']) !== '') ? trim($_POST['edit_email']) : null;
+        $birthdate = $_POST['edit_birthdate'] ?? null;
         $shift = $_POST['edit_shift'] ?? 'Night';
 
         if ($id > 0 && !empty($name)) {
@@ -79,8 +83,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->beginTransaction();
 
                 // 1. Update Employee
-                $stmt = $pdo->prepare("UPDATE employees SET employee_id = ?, name = ?, position = ?, salary = ?, email = ?, shift = ? WHERE id = ?");
-                $stmt->execute([$eid, $name, $pos, $sal, $email, $shift, $id]);
+                $stmt = $pdo->prepare("UPDATE employees SET employee_id = ?, name = ?, position = ?, salary = ?, email = ?, birthdate = ?, shift = ? WHERE id = ?");
+                $stmt->execute([$eid, $name, $pos, $sal, $email, $birthdate, $shift, $id]);
                 
                 // 2. Sync User account username
                 $new_username = strtolower(str_replace(' ', '', $name));
@@ -194,9 +198,10 @@ include 'sidebar.php';
                                 <button class="btn btn-sm btn-outline-primary edit-btn" 
                                         data-id="<?php echo $emp['id']; ?>"
                                         data-eid="<?php echo $emp['employee_id']; ?>"
-                                        data-name="<?php echo $emp['name']; ?>"
-                                        data-email="<?php echo $emp['email']; ?>"
-                                        data-pos="<?php echo $emp['position']; ?>"
+                                        data-name="<?php echo h($emp['name']); ?>"
+                                        data-email="<?php echo h($emp['email'] ?? ''); ?>"
+                                        data-birthdate="<?php echo h($emp['birthdate'] ?? ''); ?>"
+                                        data-pos="<?php echo h($emp['position']); ?>"
                                         data-salary="<?php echo $emp['salary']; ?>"
                                         data-shift="<?php echo $emp['shift']; ?>"
                                         data-bs-toggle="modal" data-bs-target="#editEmployeeModal">
@@ -231,6 +236,10 @@ include 'sidebar.php';
                     <div class="mb-3">
                         <label class="form-label small fw-bold">Email Address</label>
                         <input type="email" name="email" class="form-control" placeholder="Optional">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Birthdate</label>
+                        <input type="date" name="birthdate" class="form-control" required>
                     </div>
                     <div class="mb-3">
                         <label class="form-label small fw-bold">Position</label>
@@ -292,6 +301,10 @@ include 'sidebar.php';
                     <div class="mb-3">
                         <label class="form-label small fw-bold">Email Address</label>
                         <input type="email" name="edit_email" id="val_email" class="form-control" placeholder="Optional">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Birthdate</label>
+                        <input type="date" name="edit_birthdate" id="val_birthdate" class="form-control" required>
                     </div>
                     <div class="mb-3">
                         <label class="form-label small fw-bold">Position</label>
@@ -365,6 +378,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const eid = btn.getAttribute('data-eid');
             const name = btn.getAttribute('data-name');
             const email = btn.getAttribute('data-email');
+            const birthdate = btn.getAttribute('data-birthdate');
             const pos = btn.getAttribute('data-pos');
             const salary = btn.getAttribute('data-salary');
             const shift = btn.getAttribute('data-shift');
@@ -376,6 +390,7 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('val_eid').value = eid || '';
             document.getElementById('val_name').value = name || '';
             document.getElementById('val_email').value = email || '';
+            document.getElementById('val_birthdate').value = birthdate || '';
             document.getElementById('val_pos').value = pos || '';
             document.getElementById('val_salary').value = salary || '';
             document.getElementById('val_shift').value = shift || 'Night';
