@@ -4,6 +4,11 @@ authorize(['employee']);
 
 $employee_id = $_SESSION['employee_id'];
 
+// Fetch employee full name for password logic
+$stmt_emp = $pdo->prepare("SELECT name FROM employees WHERE id = ?");
+$stmt_emp->execute([$employee_id]);
+$full_name = $stmt_emp->fetchColumn() ?: $_SESSION['username'];
+
 $stmt = $pdo->prepare("SELECT * FROM payroll WHERE employee_id = ? ORDER BY payroll_date DESC");
 $stmt->execute([$employee_id]);
 $payrolls = $stmt->fetchAll();
@@ -71,7 +76,7 @@ include 'sidebar.php';
                                 <button type="button" 
                                         class="btn btn-sm btn-outline-primary view-payslip-btn" 
                                         data-id="<?php echo $p['id']; ?>"
-                                        data-name="<?php echo h($_SESSION['username']); ?>"
+                                        data-name="<?php echo h($full_name); ?>"
                                         data-eid="<?php echo h($_SESSION['employee_id_val'] ?? ''); ?>">
                                     <i class="fas fa-file-pdf me-1"></i> View Payslip
                                 </button>
