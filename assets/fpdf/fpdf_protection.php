@@ -138,43 +138,43 @@ class FPDF_Protection extends FPDF
  	}
  
  	function _RC4($key, $data)
- 	{
- 		static $last_key, $last_state;
- 
- 		if($key != $last_key)
- 		{
- 			if(strlen($key)==0)
- 				return $data;
- 			$k = str_repeat($key, 256/strlen($key)+1);
- 			$state = range(0, 255);
- 			$j = 0;
- 			for($i=0; $i<256; $i++)
- 			{
- 				$j = ($j + $state[$i] + ord($k[$i])) % 256;
- 				$t = $state[$i];
- 				$state[$i] = $state[$j];
- 				$state[$j] = $t;
- 			}
- 			$last_key = $key;
- 			$last_state = $state;
- 		}
- 		else
- 			$state = $last_state;
- 
- 		$len = strlen($data);
- 		$j = 0;
- 		$i = 0;
- 		$res = '';
- 		for($k=0; $k<$len; $k++)
- 		{
- 			$i = ($i + 1) % 256;
- 			$j = ($j + $state[$i]) % 256;
- 			$t = $state[$i];
- 			$state[$i] = $state[$j];
- 			$state[$j] = $t;
- 			$res .= $data[$k] ^ chr($state[($state[$i] + $state[$j]) % 256]);
- 		}
- 		return $res;
- 	}
+	{
+		static $last_key, $last_state;
+
+		if($key != $last_key)
+		{
+			if(strlen($key)==0)
+				return $data;
+			$k = str_repeat($key, ceil(256/strlen($key)));
+			$state = range(0, 255);
+			$j = 0;
+			for($i=0; $i<256; $i++)
+			{
+				$j = ($j + $state[$i] + ord($k[$i])) % 256;
+				$t = $state[$i];
+				$state[$i] = $state[$j];
+				$state[$j] = $t;
+			}
+			$last_key = $key;
+			$last_state = $state;
+		}
+		else
+			$state = $last_state;
+
+		$len = strlen($data);
+		$j = 0;
+		$i = 0;
+		$res = '';
+		for($k=0; $k<$len; $k++)
+		{
+			$i = ($i + 1) % 256;
+			$j = ($j + $state[$i]) % 256;
+			$t = $state[$i];
+			$state[$i] = $state[$j];
+			$state[$j] = $t;
+			$res .= $data[$k] ^ chr($state[($state[$i] + $state[$j]) % 256]);
+		}
+		return $res;
+	}
 }
 ?>

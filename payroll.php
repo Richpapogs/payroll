@@ -172,7 +172,13 @@ include 'sidebar.php';
                                         data-bs-toggle="modal" data-bs-target="#editPayrollModal">
                                     <i class="fas fa-edit"></i>
                                 </button>
-                                <a href="payslip_gen.php?id=<?php echo $p['id']; ?>" target="_blank" class="btn btn-sm btn-outline-dark"><i class="fas fa-file-invoice"></i></a>
+                                <button type="button" 
+                                        class="btn btn-sm btn-outline-dark view-payslip-btn" 
+                                        data-id="<?php echo $p['id']; ?>"
+                                        data-name="<?php echo h($p['name']); ?>"
+                                        data-eid="<?php echo h($p['eid']); ?>">
+                                    <i class="fas fa-file-invoice"></i>
+                                </button>
                                 <a href="?delete=<?php echo $p['id']; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this payroll record?')"><i class="fas fa-trash"></i></a>
                             </div>
                         </td>
@@ -183,6 +189,74 @@ include 'sidebar.php';
         </div>
     </div>
 </div>
+
+<!-- Password Modal -->
+<div class="modal fade" id="passwordModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header border-0 pb-0">
+                <h6 class="modal-title fw-bold">Security Verification</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body pt-3">
+                <p class="small text-muted mb-3">Please enter the payslip password to continue.</p>
+                <div class="mb-3">
+                    <input type="password" id="payslip_password" class="form-control" placeholder="Enter Password">
+                    <div id="password_error" class="text-danger smaller mt-1 d-none">Incorrect password. Please try again.</div>
+                </div>
+                <button type="button" id="verify_password_btn" class="btn btn-primary w-100 fw-bold py-2">View Payslip</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+$(document).ready(function() {
+    let currentPayrollId = null;
+    let expectedPassword = '';
+
+    $('.view-payslip-btn').on('click', function() {
+        currentPayrollId = $(this).data('id');
+        const name = $(this).data('name');
+        const eid = $(this).data('eid');
+        
+        // Generate expected password: [FirstInitial_Uppercase][LastName_Lowercase][Last4_EmployeeID]
+        const nameParts = name.trim().split(' ');
+        const firstName = nameParts[0];
+        const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+        
+        const firstInitial = firstName.charAt(0).toUpperCase();
+        const lastNameLower = lastName.toLowerCase();
+        const last4Id = eid.slice(-4);
+        
+        expectedPassword = firstInitial + lastNameLower + last4Id;
+        
+        $('#payslip_password').val('');
+        $('#password_error').addClass('d-none');
+        $('#passwordModal').modal('show');
+    });
+
+    $('#verify_password_btn').on('click', function() {
+        const enteredPassword = $('#payslip_password').val();
+        if (enteredPassword === expectedPassword) {
+            $('#passwordModal').modal('hide');
+            window.open('payslip_gen.php?id=' + currentPayrollId, '_blank');
+        } else {
+            $('#password_error').removeClass('d-none');
+            $('#payslip_password').addClass('is-invalid').focus();
+        }
+    });
+
+    $('#payslip_password').on('keypress', function(e) {
+        if (e.which === 13) {
+            $('#verify_password_btn').click();
+        }
+    }).on('input', function() {
+        $(this).removeClass('is-invalid');
+        $('#password_error').addClass('d-none');
+    });
+});
+</script>
 
 <!-- Modal -->
 <div class="modal fade" id="calculatePayrollModal" tabindex="-1">

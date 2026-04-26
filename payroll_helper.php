@@ -98,9 +98,9 @@ function calculateGrossPay($base_pay, $overtime_hrs, $hourly_rate, $bonus, $doub
     $ot_pay = round($overtime_hrs * $hourly_rate, 2);
     $double_pay_bonus = round($double_pay_days * $daily_rate, 2); // Additional daily rate for double pay days
     
-    $late_deduction = round(($late_mins / 60) * $hourly_rate, 2);
-    $undertime_deduction = round(($undertime_mins / 60) * $hourly_rate, 2);
-    $att_deductions = $late_deduction + $undertime_deduction;
+    $late_deduction = 0;
+    $undertime_deduction = 0;
+    $att_deductions = 0;
 
     $gross = ($base_pay + $ot_pay + $bonus + $double_pay_bonus);
 
@@ -138,6 +138,7 @@ function recalculatePayroll($pdo, $payroll_id) {
     $hourly_rate = $daily_rate / STANDARD_HOURS;
 
     // 3. FORCE RECALCULATION: Fetch ALL attendance logs for the period
+    // Includes logs with status 'Leave' (which now have 8 hours auto-credited)
     $stmt_att = $pdo->prepare("SELECT total_hours, late_minutes, undertime_minutes, is_double_pay FROM attendance WHERE employee_id = ? AND attendance_date BETWEEN ? AND ?");
     $stmt_att->execute([$employee_id, $cutoff_start, $cutoff_end]);
     $attendance = $stmt_att->fetchAll(PDO::FETCH_ASSOC);
@@ -147,42 +148,38 @@ function recalculatePayroll($pdo, $payroll_id) {
     $total_double_pay_days = 0;
     $total_late_mins = 0;
     $total_undertime_mins = 0;
+    $days_with_attendance = 0;
 
     foreach ($attendance as $att) {
         $hrs = (float)$att['total_hours'];
         if ($hrs > 0) {
+            $days_with_attendance++;
             $total_worked_hrs += $hrs;
             if ($hrs > STANDARD_HOURS) {
                 $total_ot_hrs += ($hrs - STANDARD_HOURS);
             }
             if ($att['is_double_pay']) {
-                $total_double_pay_days += ($hrs / STANDARD_HOURS); // Pro-rated double pay
+                $total_double_pay_days += 1; // Double pay is per day present
             }
             $total_late_mins += (int)$att['late_minutes'];
             $total_undertime_mins += (int)$att['undertime_minutes'];
         }
     }
 
-    // 4. Add Approved-Paid Leaves
-    $stmt_leaves = $pdo->prepare("SELECT SUM(requested_hours) FROM leave_requests WHERE employee_id = ? AND status = 'Approved' AND payment_status = 'Paid' AND (start_date BETWEEN ? AND ? OR end_date BETWEEN ? AND ?)");
-    $stmt_leaves->execute([$employee_id, $cutoff_start, $cutoff_end, $cutoff_start, $cutoff_end]);
-    $paid_leave_hours = (float)($stmt_leaves->fetchColumn() ?: 0);
-    $total_worked_hrs += $paid_leave_hours;
-
     // 5. MATH FIX: Calculate EVERYTHING from scratch
-    $days_worked_decimal = round($total_worked_hrs / STANDARD_HOURS, 3);
-    $base_pay = round($daily_rate * $days_worked_decimal, 2);
+    // Base Pay is now based on FULL days present (to show late/undertime as a separate deduction)
+    $base_pay = round($daily_rate * $days_with_attendance, 2);
     
     $ot_pay = round($total_ot_hrs * $hourly_rate, 2);
     $double_pay_bonus = round($total_double_pay_days * $daily_rate, 2);
     
-    $late_deduction = round(($total_late_mins / 60) * $hourly_rate, 2);
-    $undertime_deduction = round(($total_undertime_mins / 60) * $hourly_rate, 2);
+    // Calculate Attendance Deductions in Cash
+    $minute_rate = $hourly_rate / 60;
+    $late_deduction = round($total_late_mins * $minute_rate, 2);
+    $undertime_deduction = round($total_undertime_mins * $minute_rate, 2);
     $att_deductions = $late_deduction + $undertime_deduction;
 
-    // Calculate Gross Pay (Earnings before government deductions)
-    // MATH FIX: Gross Pay = (Total Hours / 8) * Daily Rate + OT + Bonus + Double Pay
-    // We do NOT subtract att_deductions here because base_pay already accounts for actual hours worked.
+    // Gross Pay is the total earned before ANY deductions (Gov or Attendance)
     $gross_pay = ($base_pay + $ot_pay + $bonus + $double_pay_bonus);
     
     // ZERO-FLOOR LOGIC: Gross pay cannot be negative
@@ -195,11 +192,13 @@ function recalculatePayroll($pdo, $payroll_id) {
     $pagibig = calculatePagIBIG($employee['salary']);
 
     // Withholding Tax (Based on Taxable Income)
-    $taxable_income = $gross_pay - ($sss + $philhealth + $pagibig);
+    // Taxable Income = Gross - (Late/UT) - Gov Deductions
+    $taxable_income = ($gross_pay - $att_deductions) - ($sss + $philhealth + $pagibig);
     if ($taxable_income < 0) $taxable_income = 0;
     $tax = calculateTax($taxable_income);
 
-    $total_deductions = round($sss + $philhealth + $pagibig + $tax, 2);
+    // Total Deductions = Gov + Attendance Deductions
+    $total_deductions = round($sss + $philhealth + $pagibig + $tax + $att_deductions, 2);
     $net_pay = $gross_pay - $total_deductions;
     
     // ZERO-FLOOR LOGIC: Net pay cannot be negative
@@ -224,7 +223,7 @@ function recalculatePayroll($pdo, $payroll_id) {
         WHERE id = ?");
     
     return $stmt_upd->execute([
-        $days_worked_decimal, 
+        $days_with_attendance, 
         $base_pay, 
         $ot_pay, 
         $bonus, 

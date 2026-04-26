@@ -8,8 +8,10 @@ $month = isset($_GET['month']) ? $_GET['month'] : date('Y-m');
 $report_data = [];
 if ($type === 'attendance') {
     // Enhanced Attendance Summary with Hours-Based Logic
+    // Fix: Count 'Leave' days as Present Days (since they are paid) 
+    // and correctly sum total_hours (which now include auto-credited leave hours)
     $stmt = $pdo->prepare("SELECT e.id, e.name, e.employee_id, 
-                           SUM(CASE WHEN a.total_hours > 0 THEN 1 ELSE 0 END) as present_days,
+                           SUM(CASE WHEN a.total_hours > 0 OR a.status = 'Leave' THEN 1 ELSE 0 END) as present_days,
                            SUM(a.total_hours) as total_hours,
                            SUM(CASE WHEN a.status = 'Absent' THEN 1 ELSE 0 END) as absent_days,
                            SUM(CASE WHEN a.status = 'Leave' THEN 1 ELSE 0 END) as leave_days,

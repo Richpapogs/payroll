@@ -20,10 +20,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Regenerate session ID to prevent session fixation
             session_regenerate_id(true);
             
+            // Fetch employee ID string for password logic
+            $eid_val = '';
+            if ($user['employee_id']) {
+                $stmt_eid = $pdo->prepare("SELECT employee_id FROM employees WHERE id = ?");
+                $stmt_eid->execute([$user['employee_id']]);
+                $eid_val = $stmt_eid->fetchColumn() ?: '';
+            }
+
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['username'] = $user['username'];
             $_SESSION['role'] = $user['role'];
             $_SESSION['employee_id'] = $user['employee_id'];
+            $_SESSION['employee_id_val'] = $eid_val;
             $_SESSION['first_login'] = $user['first_login'];
 
             // Log successful login

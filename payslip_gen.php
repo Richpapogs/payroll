@@ -27,7 +27,7 @@ if (isEmployee() && $p['employee_id'] != $_SESSION['employee_id']) {
 
 // Derive values for payslip
 $daily_rate = round($p['monthly_base'] / 22, 2);
-$days_worked = $daily_rate > 0 ? round($p['basic_pay'] / $daily_rate, 1) : 0;
+$days_worked = (float)$p['days_worked'];
 $hourly_rate = round($daily_rate / 8, 2);
 $ot_hrs = $hourly_rate > 0 ? round($p['overtime_pay'] / $hourly_rate, 1) : 0;
 ?>
@@ -63,7 +63,6 @@ $ot_hrs = $hourly_rate > 0 ? round($p['overtime_pay'] / $hourly_rate, 1) : 0;
 <body onload="window.print()">
     <div class="container no-print mb-4 text-center">
         <button onclick="window.print()" class="btn btn-primary px-4 shadow-sm me-2 fw-bold"><i class="fas fa-print me-2"></i> Print Payslip</button>
-        <a href="payslip_pdf.php?id=<?php echo $p['id']; ?>" class="btn btn-dark px-4 shadow-sm me-2 fw-bold"><i class="fas fa-file-pdf me-2"></i> Download Protected PDF</a>
         <a href="javascript:window.close()" class="btn btn-light border px-4 fw-bold">Close Tab</a>
     </div>
 
@@ -101,40 +100,38 @@ $ot_hrs = $hourly_rate > 0 ? round($p['overtime_pay'] / $hourly_rate, 1) : 0;
                 <table class="table-custom w-100">
                     <tbody>
                         <tr>
-                            <td>Base Pay (<?php echo $days_worked; ?> days worked)</td>
-                            <td class="amount">₱<?php echo number_format($p['basic_pay'], 2); ?></td>
+                            <td class="text-muted">Base Pay (<?= number_format($days_worked, 1) ?> days present)</td>
+                            <td class="amount">₱<?= number_format($p['basic_pay'], 2) ?></td>
                         </tr>
                         <?php if ($p['overtime_pay'] > 0): ?>
                         <tr>
-                            <td>Overtime (<?php echo $ot_hrs; ?> hrs logged)</td>
-                            <td class="amount">₱<?php echo number_format($p['overtime_pay'], 2); ?></td>
-                        </tr>
-                        <?php endif; ?>
-                        <?php if ($p['double_pay_amt'] > 0): ?>
-                        <tr>
-                            <td>Double Pay Adjustment</td>
-                            <td class="amount">₱<?php echo number_format($p['double_pay_amt'], 2); ?></td>
+                            <td class="text-muted">Overtime Pay</td>
+                            <td class="amount">₱<?= number_format($p['overtime_pay'], 2) ?></td>
                         </tr>
                         <?php endif; ?>
                         <?php if ($p['bonus_pay'] > 0): ?>
                         <tr>
-                            <td>Bonuses / Adjustments</td>
-                            <td class="amount">₱<?php echo number_format($p['bonus_pay'], 2); ?></td>
+                            <td class="text-muted">Bonus / Adjustments</td>
+                            <td class="amount">₱<?= number_format($p['bonus_pay'], 2) ?></td>
                         </tr>
                         <?php endif; ?>
-                        <tr class="fw-bold text-dark border-0">
-                            <td class="pt-3 h6 fw-bold">TOTAL GROSS PAY</td>
-                            <td class="pt-3 amount h6 fw-bold">₱<?php echo number_format($p['gross_pay'], 2); ?></td>
+                        <?php if ($p['double_pay_amt'] > 0): ?>
+                        <tr>
+                            <td class="text-muted">Double Pay Bonus</td>
+                            <td class="amount">₱<?= number_format($p['double_pay_amt'], 2) ?></td>
                         </tr>
-                    </tbody>
-                </table>
+                        <?php endif; ?>
+                        <tr class="total-row">
+                            <td>TOTAL GROSS PAY</td>
+                            <td class="amount">₱<?= number_format($p['gross_pay'], 2) ?></td>
+                        </tr>
 
-                <div class="section-header mt-4 text-danger">ATTENDANCE DEDUCTIONS</div>
-                <table class="table-custom w-100">
-                    <tbody>
+                        <tr class="section-title">
+                            <td colspan="2">ATTENDANCE DEDUCTIONS</td>
+                        </tr>
                         <tr>
                             <td class="text-muted">Late / Undertime / Absences</td>
-                            <td class="amount text-danger">-₱<?php echo number_format($p['attendance_deductions'], 2); ?></td>
+                            <td class="amount text-danger">-₱<?= number_format($p['attendance_deductions'], 2) ?></td>
                         </tr>
                     </tbody>
                 </table>

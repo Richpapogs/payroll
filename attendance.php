@@ -34,38 +34,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_attendance'])) {
                     $stmt_s->execute([$employee_id]);
                     $emp_shift = $stmt_s->fetchColumn() ?: 'Night';
 
-                    $start = strtotime($time_in);
-                    $end = strtotime($time_out);
+                    // Use DateTime for robust cross-midnight calculations
+                    $base_date = $attendance_date;
+                    $actual_start = new DateTime($base_date . ' ' . $time_in);
+                    $actual_end = new DateTime($base_date . ' ' . $time_out);
                     
-                    if ($end < $start) {
-                        // Night shift crossing midnight
-                        $end += 86400; // Add 24 hours
-                    }
-                    
-                    $diff = ($end - $start) / 3600;
-                    $total_hours = round($diff, 2);
-
-                    // Shift times
                     if ($emp_shift === 'Night') {
                         $shift_start_str = "22:00:00";
                         $shift_end_str = "06:00:00";
+                        
+                        // If clocking in early morning (e.g. 12AM-8AM) for a Night shift, 
+                        // it's actually the next day relative to the attendance start date
+                        $hour_in = (int)$actual_start->format('H');
+                        if ($hour_in < 12) {
+                            $actual_start->modify('+1 day');
+                        }
                     } else {
                         $shift_start_str = "09:00:00";
                         $shift_end_str = "17:00:00";
                     }
 
-                    $standard_start = strtotime($shift_start_str);
-                    $standard_end = strtotime($shift_end_str);
-                    
-                    if ($emp_shift === 'Night' && $standard_end < $standard_start) {
-                        $standard_end += 86400;
+                    // Handle actual clock out crossing midnight relative to clock in
+                    if ($actual_end < $actual_start) {
+                        $actual_end->modify('+1 day');
                     }
 
-                    if ($start > $standard_start) {
-                        $late_mins = round(($start - $standard_start) / 60);
+                    // Standard Shift Times
+                    $standard_start = new DateTime($base_date . ' ' . $shift_start_str);
+                    $standard_end = new DateTime($base_date . ' ' . $shift_end_str);
+                    
+                    if ($standard_end < $standard_start) {
+                        $standard_end->modify('+1 day');
                     }
-                    if ($end < $standard_end) {
-                        $undertime_mins = round(($standard_end - $end) / 60);
+
+                    // Calculate Total Hours Worked
+                    $diff_seconds = $actual_end->getTimestamp() - $actual_start->getTimestamp();
+                    $total_hours = round($diff_seconds / 3600, 2);
+
+                    // Calculate Late Minutes
+                    if ($actual_start > $standard_start) {
+                        $late_mins = round(($actual_start->getTimestamp() - $standard_start->getTimestamp()) / 60);
+                    }
+
+                    // Calculate Undertime Minutes
+                    if ($actual_end < $standard_end) {
+                        $undertime_mins = round(($standard_end->getTimestamp() - $actual_end->getTimestamp()) / 60);
                     }
                 }
 

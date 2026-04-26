@@ -12,8 +12,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     $payment_status = $_POST['payment_status'] ?? 'Unpaid';
 
     try {
+        $pdo->beginTransaction();
+        
         $stmt = $pdo->prepare("UPDATE leave_requests SET status = ?, payment_status = ? WHERE id = ?");
         $stmt->execute([$status, $payment_status, $request_id]);
+        
+        // If Approved and Paid, sync with Attendance
+        if ($status === 'Approved' && $payment_status === 'Paid') {
+            // Fetch leave details
+            $stmt_lr = $pdo->prepare("SELECT employee_id, start_date, end_date, requested_hours FROM leave_requests WHERE id = ?");
+            $stmt_lr->execute([$request_id]);
+            $leave = $stmt_lr->fetch();
+            
+            if ($leave) {
+                $begin = new DateTime($leave['start_date']);
+                $end = new DateTime($leave['end_date']);
+                $end->modify('+1 day');
+                $interval = new DateInterval('P1D');
+                $daterange = new DatePeriod($begin, $interval ,$end);
+                
+                foreach($daterange as $date){
+                    $att_date = $date->format("Y-m-d");
+                    // Upsert attendance record for each day of leave
+                    $stmt_att = $pdo->prepare("INSERT INTO attendance (employee_id, attendance_date, status, total_hours) 
+                                              VALUES (?, ?, 'Leave', ?) 
+                                              ON DUPLICATE KEY UPDATE status = 'Leave', total_hours = ?");
+                    $stmt_att->execute([$leave['employee_id'], $att_date, 8.00, 8.00]);
+                    
+                    // Trigger payroll recalculation for each date affected
+                    require_once 'payroll_helper.php';
+                    upsertPayroll($pdo, $leave['employee_id'], $att_date);
+                }
+            }
+        }
         
         // Notify Employee
         $stmt_emp = $pdo->prepare("SELECT lr.employee_id, u.id as user_id, lr.leave_type FROM leave_requests lr JOIN users u ON lr.employee_id = u.employee_id WHERE lr.id = ?");
@@ -27,7 +58,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         }
 
         $message = "Leave request updated successfully!";
+        $pdo->commit();
     } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         $error = "Error updating request: " . $e->getMessage();
     }
 }
