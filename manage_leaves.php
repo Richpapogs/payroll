@@ -5,6 +5,19 @@ authorize(['admin', 'hr']);
 $message = '';
 $error = '';
 
+// Handle Deletion
+if (isset($_GET['delete_history'])) {
+    $delete_id = (int)$_GET['delete_history'];
+    try {
+        $stmt = $pdo->prepare("DELETE FROM leave_requests WHERE id = ? AND status != 'Pending'");
+        $stmt->execute([$delete_id]);
+        $message = "History record deleted successfully.";
+        logActivity($pdo, $_SESSION['user_id'], 'Delete Leave History', "Deleted leave request ID: $delete_id");
+    } catch (PDOException $e) {
+        $error = "Error deleting record: " . $e->getMessage();
+    }
+}
+
 // Handle Approval/Rejection
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     $request_id = (int)$_POST['request_id'];
@@ -183,7 +196,8 @@ include 'sidebar.php';
                         <th>Status</th>
                         <th>Payment</th>
                         <th>Attachment</th>
-                        <th class="text-end pe-4">Processed At</th>
+                        <th>Processed At</th>
+                        <th class="text-end pe-4">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -224,7 +238,14 @@ include 'sidebar.php';
                                 <span class="text-muted smaller">None</span>
                             <?php endif; ?>
                         </td>
-                        <td class="text-end pe-4 small text-muted"><?php echo date('M d, Y', strtotime($r['created_at'])); ?></td>
+                        <td class="small text-muted"><?php echo date('M d, Y', strtotime($r['created_at'])); ?></td>
+                        <td class="text-end pe-4">
+                            <a href="?delete_history=<?php echo $r['id']; ?>" 
+                               class="btn btn-sm btn-outline-danger" 
+                               onclick="return confirm('Are you sure you want to delete this history record?')">
+                                <i class="fas fa-trash"></i>
+                            </a>
+                        </td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>

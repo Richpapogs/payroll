@@ -11,6 +11,7 @@ $date = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_attendance'])) {
     $attendance_date = $_POST['attendance_date'];
     $records = $_POST['attendance']; // Array: [employee_id => [status, time_in, time_out, is_double_pay]]
+    $selected_ids = $_POST['selected_employees'] ?? []; // Array of IDs to actually save
 
     if (strtotime($attendance_date) > strtotime(date('Y-m-d'))) {
         $error = "Cannot mark attendance for future dates.";
@@ -18,6 +19,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_attendance'])) {
         try {
             $pdo->beginTransaction();
             foreach ($records as $employee_id => $data) {
+                // Skip if not selected
+                if (!in_array($employee_id, $selected_ids)) {
+                    continue;
+                }
+
                 $status = $data['status'];
                 $time_in = !empty($data['time_in']) ? $data['time_in'] : null;
                 $time_out = !empty($data['time_out']) ? $data['time_out'] : null;
@@ -28,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_attendance'])) {
                 $late_mins = 0;
                 $undertime_mins = 0;
 
-                if (($status === 'Present' || $status === 'Half-day') && $time_in && $time_out) {
+                if ($status === 'Present' && $time_in && $time_out) {
                     // Fetch employee shift
                     $stmt_s = $pdo->prepare("SELECT shift FROM employees WHERE id = ?");
                     $stmt_s->execute([$employee_id]);
@@ -96,11 +102,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_attendance'])) {
             }
 
             // Automatic Trigger: Upsert payroll records for every employee updated
-            foreach ($records as $employee_id => $data) {
+            foreach ($selected_ids as $employee_id) {
                 upsertPayroll($pdo, $employee_id, $attendance_date);
             }
 
-            logActivity($pdo, $_SESSION['user_id'], 'Mark Attendance', "Attendance for $attendance_date (Double Pay: " . (isset($_POST['global_double_pay']) ? 'Yes' : 'No') . ")");
+            logActivity($pdo, $_SESSION['user_id'], 'Mark Attendance', "Attendance for $attendance_date (Selected: " . count($selected_ids) . ")");
             $pdo->commit();
             $message = "Attendance logs updated successfully!";
         } catch (Exception $e) {
@@ -146,16 +152,22 @@ include 'sidebar.php';
     </div>
 <?php endif; ?>
 
-<form action="" method="POST">
+<form action="" method="POST" id="attendanceForm">
     <input type="hidden" name="mark_attendance" value="1">
     <input type="hidden" name="attendance_date" value="<?php echo $date; ?>">
 
     <div class="card border-0 shadow-sm overflow-hidden mb-4">
         <div class="card-header bg-white py-3 border-0 d-flex justify-content-between align-items-center">
             <h5 class="card-title mb-0 fw-bold text-dark"><i class="fas fa-calendar-day me-2 text-primary"></i>Attendance Sheet: <?php echo date('M d, Y', strtotime($date)); ?></h5>
-            <div class="form-check form-switch bg-warning-subtle px-3 py-1 rounded-pill border border-warning-subtle">
-                <input class="form-check-input" type="checkbox" id="selectAllDoublePay">
-                <label class="form-check-label small fw-bold text-warning-emphasis" for="selectAllDoublePay">Mark All as Double Pay</label>
+            <div class="d-flex gap-3 align-items-center">
+                <div class="form-check form-switch bg-light px-3 py-1 rounded-pill border">
+                    <input class="form-check-input" type="checkbox" id="selectAllEmployees">
+                    <label class="form-check-label small fw-bold text-muted" for="selectAllEmployees">Select All</label>
+                </div>
+                <div class="form-check form-switch bg-warning-subtle px-3 py-1 rounded-pill border border-warning-subtle">
+                    <input class="form-check-input" type="checkbox" id="selectAllDoublePay">
+                    <label class="form-check-label small fw-bold text-warning-emphasis" for="selectAllDoublePay">Mark All Double Pay</label>
+                </div>
             </div>
         </div>
         <div class="card-body p-0">
@@ -163,7 +175,10 @@ include 'sidebar.php';
                 <table class="table table-hover align-middle mb-0">
                     <thead class="bg-light">
                         <tr>
-                            <th class="ps-4">Employee</th>
+                            <th class="ps-4" style="width: 50px;">
+                                <!-- Column for selection checkboxes -->
+                            </th>
+                            <th>Employee</th>
                             <th>Status</th>
                             <th>Time In</th>
                             <th>Time Out</th>
@@ -173,36 +188,34 @@ include 'sidebar.php';
                     </thead>
                     <tbody>
                         <?php foreach ($employees as $emp): ?>
-                        <tr>
+                        <tr class="attendance-row" data-emp-id="<?php echo $emp['id']; ?>">
                             <td class="ps-4">
-                                <div class="fw-bold text-dark"><?php echo $emp['name']; ?></div>
+                                <input type="checkbox" name="selected_employees[]" value="<?php echo $emp['id']; ?>" class="form-check-input emp-checkbox" <?php echo ($emp['status']) ? 'checked' : ''; ?>>
+                            </td>
+                            <td>
+                                <div class="fw-bold text-dark employee-name-clickable" style="cursor: pointer;"><?php echo $emp['name']; ?></div>
                                 <div class="text-muted smaller"><?php echo $emp['employee_id']; ?> | <span class="text-primary fw-bold"><?php echo ($emp['shift'] == 'Morning') ? 'Morning Shift' : 'Night Shift'; ?></span></div>
                             </td>
                             <td>
-                                <select name="attendance[<?php echo $emp['id']; ?>][status]" class="form-select form-select-sm status-select">
+                                <select name="attendance[<?php echo $emp['id']; ?>][status]" class="form-select form-select-sm status-select" <?php echo ($emp['status']) ? '' : 'disabled'; ?>>
                                     <option value="Present" <?php echo ($emp['status'] === 'Present') ? 'selected' : ''; ?>>Present</option>
-                                    <option value="Half-day" <?php echo ($emp['status'] === 'Half-day') ? 'selected' : ''; ?>>Half-day</option>
                                     <option value="Absent" <?php echo ($emp['status'] === 'Absent') ? 'selected' : ''; ?>>Absent</option>
                                     <option value="Leave" <?php echo ($emp['status'] === 'Leave') ? 'selected' : ''; ?>>Leave</option>
                                 </select>
                             </td>
                             <td>
-                                <?php 
-                                    $default_in = ($emp['shift'] === 'Morning') ? '09:00' : '22:00';
-                                ?>
-                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_in]" class="form-control form-control-sm" value="<?php echo $emp['time_in'] ?: $default_in; ?>">
+                                <?php $default_in = ($emp['shift'] === 'Morning') ? '09:00' : '22:00'; ?>
+                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_in]" class="form-control form-control-sm" value="<?php echo $emp['time_in'] ?: $default_in; ?>" <?php echo ($emp['status']) ? '' : 'disabled'; ?>>
                             </td>
                             <td>
-                                <?php 
-                                    $default_out = ($emp['shift'] === 'Morning') ? '17:00' : '06:00';
-                                ?>
-                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_out]" class="form-control form-control-sm" value="<?php echo $emp['time_out'] ?: $default_out; ?>">
+                                <?php $default_out = ($emp['shift'] === 'Morning') ? '17:00' : '06:00'; ?>
+                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_out]" class="form-control form-control-sm" value="<?php echo $emp['time_out'] ?: $default_out; ?>" <?php echo ($emp['status']) ? '' : 'disabled'; ?>>
                             </td>
                             <td>
                                 <span class="badge bg-light text-dark border"><?php echo $emp['total_hours'] ?: '0.00'; ?> hrs</span>
                             </td>
                             <td class="text-center">
-                                <input class="form-check-input dp-checkbox" type="checkbox" name="attendance[<?php echo $emp['id']; ?>][is_double_pay]" <?php echo ($emp['is_double_pay']) ? 'checked' : ''; ?>>
+                                <input class="form-check-input dp-checkbox" type="checkbox" name="attendance[<?php echo $emp['id']; ?>][is_double_pay]" <?php echo ($emp['is_double_pay']) ? 'checked' : ''; ?> <?php echo ($emp['status']) ? '' : 'disabled'; ?>>
                             </td>
                         </tr>
                         <?php endforeach; ?>
@@ -220,8 +233,47 @@ include 'sidebar.php';
 
 <script>
 $(document).ready(function() {
+    // Function to toggle inputs based on checkbox
+    function toggleRowInputs(row, isChecked) {
+        row.find('select, input[type="time"], .dp-checkbox').prop('disabled', !isChecked);
+        if (isChecked) {
+            row.addClass('table-primary-subtle');
+        } else {
+            row.removeClass('table-primary-subtle');
+        }
+    }
+
+    // Initialize row states
+    $('.attendance-row').each(function() {
+        const checkbox = $(this).find('.emp-checkbox');
+        toggleRowInputs($(this), checkbox.prop('checked'));
+    });
+
+    // Individual checkbox change
+    $('.emp-checkbox').on('change', function() {
+        const row = $(this).closest('.attendance-row');
+        toggleRowInputs(row, $(this).prop('checked'));
+        
+        // Update Select All state
+        const allChecked = $('.emp-checkbox:checked').length === $('.emp-checkbox').length;
+        $('#selectAllEmployees').prop('checked', allChecked);
+    });
+
+    // Click on name to toggle
+    $('.employee-name-clickable').on('click', function() {
+        const checkbox = $(this).closest('.attendance-row').find('.emp-checkbox');
+        checkbox.prop('checked', !checkbox.prop('checked')).trigger('change');
+    });
+
+    // Select All Employees
+    $('#selectAllEmployees').on('change', function() {
+        const isChecked = $(this).prop('checked');
+        $('.emp-checkbox').prop('checked', isChecked).trigger('change');
+    });
+
+    // Mark All Double Pay
     $('#selectAllDoublePay').on('change', function() {
-        $('.dp-checkbox').prop('checked', $(this).prop('checked'));
+        $('.dp-checkbox:not(:disabled)').prop('checked', $(this).prop('checked'));
     });
 });
 </script>
