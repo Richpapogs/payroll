@@ -30,10 +30,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         $stmt = $pdo->prepare("UPDATE leave_requests SET status = ?, payment_status = ? WHERE id = ?");
         $stmt->execute([$status, $payment_status, $request_id]);
         
-        // If Approved and Paid, sync with Attendance
-        if ($status === 'Approved' && $payment_status === 'Paid') {
+        // If Approved, sync with Attendance
+        if ($status === 'Approved') {
             // Fetch leave details
-            $stmt_lr = $pdo->prepare("SELECT employee_id, start_date, end_date, requested_hours FROM leave_requests WHERE id = ?");
+            $stmt_lr = $pdo->prepare("SELECT employee_id, start_date, end_date, requested_hours, leave_type FROM leave_requests WHERE id = ?");
             $stmt_lr->execute([$request_id]);
             $leave = $stmt_lr->fetch();
             
@@ -44,13 +44,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
                 $interval = new DateInterval('P1D');
                 $daterange = new DatePeriod($begin, $interval ,$end);
                 
+                // Determine hours and status based on payment_status
+                $hrs_to_inject = ($payment_status === 'Paid') ? (float)$leave['requested_hours'] : 0.00;
+                $status_to_set = ($payment_status === 'Paid') ? 'Leave | Paid' : 'Leave | Un Paid';
+                
                 foreach($daterange as $date){
                     $att_date = $date->format("Y-m-d");
                     // Upsert attendance record for each day of leave
-                    $stmt_att = $pdo->prepare("INSERT INTO attendance (employee_id, attendance_date, status, total_hours) 
-                                              VALUES (?, ?, 'Leave', ?) 
-                                              ON DUPLICATE KEY UPDATE status = 'Leave', total_hours = ?");
-                    $stmt_att->execute([$leave['employee_id'], $att_date, 8.00, 8.00]);
+                    // We set status specifically to 'Leave | Paid' or 'Leave | Un Paid'
+                    $stmt_att = $pdo->prepare("INSERT INTO attendance (employee_id, attendance_date, status, total_hours, time_in, time_out, late_minutes, undertime_minutes) 
+                                              VALUES (?, ?, ?, ?, NULL, NULL, 0, 0) 
+                                              ON DUPLICATE KEY UPDATE status = ?, total_hours = ?, time_in = NULL, time_out = NULL, late_minutes = 0, undertime_minutes = 0");
+                    $stmt_att->execute([$leave['employee_id'], $att_date, $status_to_set, $hrs_to_inject, $status_to_set, $hrs_to_inject]);
                     
                     // Trigger payroll recalculation for each date affected
                     require_once 'payroll_helper.php';

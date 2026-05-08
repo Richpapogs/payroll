@@ -148,27 +148,45 @@ function recalculatePayroll($pdo, $payroll_id) {
     $total_double_pay_days = 0;
     $total_late_mins = 0;
     $total_undertime_mins = 0;
-    $days_with_attendance = 0;
+    $days_present_decimal = 0;
 
     foreach ($attendance as $att) {
         $hrs = (float)$att['total_hours'];
-        if ($hrs > 0) {
-            $days_with_attendance++;
+        if ($hrs > 0 || strpos($att['status'], 'Leave') === 0) {
+            // A day is "present" if there's any recorded time or an approved leave
+            // We use decimal days for partial leaves (e.g., 4hrs leave = 0.5 days)
+            $day_fraction = min(1, $hrs / STANDARD_HOURS);
+            if ($day_fraction <= 0 && strpos($att['status'], 'Leave') === 0) {
+                // For Unpaid Leave, we still count it as a "Leave Day" but with 0 hours
+                $day_fraction = 0;
+            }
+            $days_present_decimal += $day_fraction;
+
             $total_worked_hrs += $hrs;
             if ($hrs > STANDARD_HOURS) {
                 $total_ot_hrs += ($hrs - STANDARD_HOURS);
             }
             if ($att['is_double_pay']) {
-                $total_double_pay_days += 1; // Double pay is per day present
+                $total_double_pay_days += 1;
             }
+            
+            // MATH FIX: Undertime logic
+            // If (Worked Hours + Paid Leave Hours) < 8, the rest is Undertime
+            if ($hrs < STANDARD_HOURS && $hrs > 0) {
+                $daily_ut = STANDARD_HOURS - $hrs;
+                $total_undertime_mins += ($daily_ut * 60);
+            }
+
             $total_late_mins += (int)$att['late_minutes'];
-            $total_undertime_mins += (int)$att['undertime_minutes'];
+            // We don't add manual undertime_minutes here as we recalculate it above based on hours
         }
     }
 
     // 5. MATH FIX: Calculate EVERYTHING from scratch
     // Base Pay is now based on FULL days present (to show late/undertime as a separate deduction)
-    $base_pay = round($daily_rate * $days_with_attendance, 2);
+    // We round to 3 decimal places for precision in partial days
+    $days_present_decimal = round($days_present_decimal, 3);
+    $base_pay = round($daily_rate * $days_present_decimal, 2);
     
     $ot_pay = round($total_ot_hrs * $hourly_rate, 2);
     $double_pay_bonus = round($total_double_pay_days * $daily_rate, 2);
@@ -223,7 +241,7 @@ function recalculatePayroll($pdo, $payroll_id) {
         WHERE id = ?");
     
     return $stmt_upd->execute([
-        $days_with_attendance, 
+        $days_present_decimal, 
         $base_pay, 
         $ot_pay, 
         $bonus, 

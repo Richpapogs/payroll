@@ -8,13 +8,14 @@ $month = isset($_GET['month']) ? $_GET['month'] : date('Y-m');
 $report_data = [];
 if ($type === 'attendance') {
     // Enhanced Attendance Summary with Hours-Based Logic
-    // Fix: Count 'Leave' days as Present Days (since they are paid) 
-    // and correctly sum total_hours (which now include auto-credited leave hours)
+    // Logic: 
+    // - 'Leave | Paid' counts as 'Present +1' AND 'Leave +1'
+    // - 'Leave | Un Paid' counts as 'Absent +1' AND 'Leave +1'
     $stmt = $pdo->prepare("SELECT e.id, e.name, e.employee_id, 
-                           SUM(CASE WHEN a.total_hours > 0 OR a.status = 'Leave' THEN 1 ELSE 0 END) as present_days,
+                           SUM(CASE WHEN a.total_hours > 0 OR a.status LIKE 'Leave%' OR a.status = 'Present' THEN 1 ELSE 0 END) as present_days,
                            SUM(a.total_hours) as total_hours,
-                           SUM(CASE WHEN a.status = 'Absent' THEN 1 ELSE 0 END) as absent_days,
-                           SUM(CASE WHEN a.status = 'Leave' THEN 1 ELSE 0 END) as leave_days,
+                           SUM(CASE WHEN a.status = 'Absent' OR a.status = 'Leave | Un Paid' THEN 1 ELSE 0 END) as absent_days,
+                           SUM(CASE WHEN a.status LIKE 'Leave%' OR EXISTS (SELECT 1 FROM leave_requests lr WHERE lr.employee_id = e.id AND lr.status = 'Approved' AND a.attendance_date BETWEEN lr.start_date AND lr.end_date) THEN 1 ELSE 0 END) as leave_days,
                            SUM(a.late_minutes) as total_late,
                            SUM(a.undertime_minutes) as total_undertime
                            FROM employees e
@@ -56,7 +57,7 @@ if (isset($_GET['get_details']) && isset($_GET['emp_id'])) {
         $total_late = array_sum(array_column($details, 'late_minutes'));
         $total_ut = array_sum(array_column($details, 'undertime_minutes'));
         $total_absent = count(array_filter($details, function($d) { return $d['status'] == 'Absent'; }));
-        $total_leave = count(array_filter($details, function($d) { return $d['status'] == 'Leave'; }));
+        $total_leave = count(array_filter($details, function($d) { return strpos($d['status'], 'Leave') === 0; }));
 
         echo '<div id="printable-log-' . $emp_id . '">
                 <div class="p-4 bg-light border-bottom d-flex justify-content-between align-items-center">
@@ -109,11 +110,19 @@ if (isset($_GET['get_details']) && isset($_GET['emp_id'])) {
         foreach ($details as $d) {
             $row_class = '';
             if ($d['status'] == 'Absent') $row_class = 'bg-danger-subtle opacity-75';
-            if ($d['status'] == 'Leave') $row_class = 'bg-info-subtle';
+            if (strpos($d['status'], 'Leave') === 0) $row_class = 'bg-warning-subtle';
             
             $status_badge = 'bg-success';
             if ($d['status'] == 'Absent') $status_badge = 'bg-danger';
-            if ($d['status'] == 'Leave') $status_badge = 'bg-info';
+            if (strpos($d['status'], 'Leave') === 0) $status_badge = 'bg-warning text-dark';
+            
+            $display_status = $d['status'];
+            if (empty($display_status) && $d['requested_leave']) {
+                $display_status = 'Leave'; // Fallback if status is empty but leave exists
+                $status_badge = 'bg-warning text-dark';
+            }
+            if ($d['status'] === 'Leave (Paid)') $display_status = 'Leave | Paid';
+            if ($d['status'] === 'Leave (Unpaid)') $display_status = 'Leave | Un Paid';
             
             $late_class = $d['late_minutes'] > 0 ? 'text-warning fw-bold' : 'text-muted opacity-50';
             $ut_class = $d['undertime_minutes'] > 0 ? 'text-danger fw-bold' : 'text-muted opacity-50';
@@ -123,7 +132,7 @@ if (isset($_GET['get_details']) && isset($_GET['emp_id'])) {
                     <td class="py-2 small">' . ($d['time_in'] ? date('h:i A', strtotime($d['time_in'])) : '—') . '</td>
                     <td class="py-2 small">' . ($d['time_out'] ? date('h:i A', strtotime($d['time_out'])) : '—') . '</td>
                     <td class="py-2 small fw-bold">' . $d['total_hours'] . ' hrs</td>
-                    <td class="py-2"><span class="badge ' . $status_badge . ' text-white smaller">' . $d['status'] . '</span></td>
+                    <td class="py-2"><span class="badge ' . $status_badge . ' smaller">' . $display_status . '</span></td>
                     <td class="py-2 small">
                         <span class="' . $late_class . '">L: ' . $d['late_minutes'] . 'm</span> | 
                         <span class="' . $ut_class . '">U: ' . $d['undertime_minutes'] . 'm</span>

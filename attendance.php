@@ -197,25 +197,25 @@ include 'sidebar.php';
                                 <div class="text-muted smaller"><?php echo $emp['employee_id']; ?> | <span class="text-primary fw-bold"><?php echo ($emp['shift'] == 'Morning') ? 'Morning Shift' : 'Night Shift'; ?></span></div>
                             </td>
                             <td>
-                                <select name="attendance[<?php echo $emp['id']; ?>][status]" class="form-select form-select-sm status-select" <?php echo ($emp['status']) ? '' : 'disabled'; ?>>
+                                <select name="attendance[<?php echo $emp['id']; ?>][status]" class="form-select form-select-sm status-select" <?php echo ($emp['status'] && strpos($emp['status'], 'Leave') === 0) ? 'disabled' : (($emp['status']) ? '' : 'disabled'); ?>>
                                     <option value="Present" <?php echo ($emp['status'] === 'Present') ? 'selected' : ''; ?>>Present</option>
                                     <option value="Absent" <?php echo ($emp['status'] === 'Absent') ? 'selected' : ''; ?>>Absent</option>
-                                    <option value="Leave" <?php echo ($emp['status'] === 'Leave') ? 'selected' : ''; ?>>Leave</option>
+                                    <option value="Leave" <?php echo ($emp['status'] && strpos($emp['status'], 'Leave') === 0) ? 'selected' : ''; ?>>Leave</option>
                                 </select>
                             </td>
                             <td>
                                 <?php $default_in = ($emp['shift'] === 'Morning') ? '09:00' : '22:00'; ?>
-                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_in]" class="form-control form-control-sm" value="<?php echo $emp['time_in'] ?: $default_in; ?>" <?php echo ($emp['status']) ? '' : 'disabled'; ?>>
+                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_in]" class="form-control form-control-sm" value="<?php echo $emp['time_in'] ?: $default_in; ?>" <?php echo ($emp['status'] && strpos($emp['status'], 'Leave') === 0) ? 'disabled' : (($emp['status']) ? '' : 'disabled'); ?>>
                             </td>
                             <td>
                                 <?php $default_out = ($emp['shift'] === 'Morning') ? '17:00' : '06:00'; ?>
-                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_out]" class="form-control form-control-sm" value="<?php echo $emp['time_out'] ?: $default_out; ?>" <?php echo ($emp['status']) ? '' : 'disabled'; ?>>
+                                <input type="time" name="attendance[<?php echo $emp['id']; ?>][time_out]" class="form-control form-control-sm" value="<?php echo $emp['time_out'] ?: $default_out; ?>" <?php echo ($emp['status'] && strpos($emp['status'], 'Leave') === 0) ? 'disabled' : (($emp['status']) ? '' : 'disabled'); ?>>
                             </td>
                             <td>
                                 <span class="badge bg-light text-dark border"><?php echo $emp['total_hours'] ?: '0.00'; ?> hrs</span>
                             </td>
                             <td class="text-center">
-                                <input class="form-check-input dp-checkbox" type="checkbox" name="attendance[<?php echo $emp['id']; ?>][is_double_pay]" <?php echo ($emp['is_double_pay']) ? 'checked' : ''; ?> <?php echo ($emp['status']) ? '' : 'disabled'; ?>>
+                                <input class="form-check-input dp-checkbox" type="checkbox" name="attendance[<?php echo $emp['id']; ?>][is_double_pay]" <?php echo ($emp['is_double_pay']) ? 'checked' : ''; ?> <?php echo ($emp['status'] && strpos($emp['status'], 'Leave') === 0) ? 'disabled' : (($emp['status']) ? '' : 'disabled'); ?>>
                             </td>
                         </tr>
                         <?php endforeach; ?>
